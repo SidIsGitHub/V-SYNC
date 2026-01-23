@@ -287,6 +287,268 @@ function saveNewPoll() {
         alert("Error saving poll: " + e.message);
     });
 }
+/* =========================================
+   PROFILE PICTURE CROPPER (Fixed: Mobile Scrolling & Huge Image)
+   ========================================= */
+
+let profileEditorState = {
+    scale: 1,
+    panning: false,
+    pointX: 0,
+    pointY: 0,
+    startX: 0,
+    startY: 0,
+    imgElement: null,
+    mode: null,
+    file: null
+};
+
+// 1. Handle File Selection
+function handleProfileFileSelect(input, mode) {
+    if (input.files && input.files[0]) {
+        const file = input.files[0];
+        const url = URL.createObjectURL(file);
+
+        profileEditorState.mode = mode;
+        profileEditorState.file = file;
+
+        const img = document.getElementById('profileEditorImg');
+        const container = document.getElementById('profileCropperZone'); // Use the Zone
+
+        // Reset Visuals
+        img.src = url;
+        img.style.display = 'block';
+        img.style.opacity = '0';
+        img.style.transform = 'translate(0px, 0px) scale(1)';
+
+        document.getElementById('profileUploadModal').classList.add('active');
+
+        img.onload = () => {
+            setTimeout(() => {
+                const boxWidth = container.offsetWidth;
+                const boxHeight = container.offsetHeight;
+                const imgW = img.naturalWidth;
+                const imgH = img.naturalHeight;
+
+                if (boxWidth === 0) return;
+
+                // Auto-Fit Logic
+                const scaleX = boxWidth / imgW;
+                const scaleY = boxHeight / imgH;
+                const initialScale = Math.max(scaleX, scaleY);
+
+                profileEditorState.pointX = 0;
+                profileEditorState.pointY = 0;
+                profileEditorState.scale = initialScale;
+                profileEditorState.imgElement = img;
+
+                updateProfileTransform();
+                img.style.opacity = '1';
+
+            }, 100);
+        };
+
+        // Attach gestures to the CONTAINER, not the image
+        initProfileGestures(container);
+
+        input.value = "";
+    }
+}
+
+// 2. Gesture Logic (Attached to Container to Stop Scroll)
+function initProfileGestures(zone) {
+    // Mouse
+    zone.onmousedown = startProfilePan;
+    zone.onwheel = (e) => {
+        e.preventDefault();
+        adjustProfileZoom(e.deltaY * -0.001);
+    };
+
+    // Touch - Passive: false is REQUIRED to stop scrolling
+    zone.addEventListener('touchstart', startProfilePan, { passive: false });
+}
+
+function getClientPos(e) {
+    if (e.touches && e.touches.length > 0) {
+        return { x: e.touches[0].clientX, y: e.touches[0].clientY };
+    }
+    return { x: e.clientX, y: e.clientY };
+}
+
+function startProfilePan(e) {
+    // CRITICAL: Stop the browser from scrolling the page
+    if (e.cancelable) e.preventDefault();
+
+    profileEditorState.panning = true;
+    const pos = getClientPos(e);
+
+    // Calculate offset based on current image position
+    profileEditorState.startX = pos.x - profileEditorState.pointX;
+    profileEditorState.startY = pos.y - profileEditorState.pointY;
+
+    // Attach Global Listeners
+    document.addEventListener('mousemove', moveProfilePan);
+    document.addEventListener('mouseup', endProfilePan);
+
+    // Mobile Listeners (passive: false)
+    document.addEventListener('touchmove', moveProfilePan, { passive: false });
+    document.addEventListener('touchend', endProfilePan);
+}
+
+function moveProfilePan(e) {
+    if (!profileEditorState.panning) return;
+
+    // CRITICAL: Stop browser scroll/refresh gestures
+    if (e.cancelable) e.preventDefault();
+
+    const pos = getClientPos(e);
+    profileEditorState.pointX = pos.x - profileEditorState.startX;
+    profileEditorState.pointY = pos.y - profileEditorState.startY;
+
+    updateProfileTransform();
+}
+
+function endProfilePan() {
+    profileEditorState.panning = false;
+    document.removeEventListener('mousemove', moveProfilePan);
+    document.removeEventListener('mouseup', endProfilePan);
+    document.removeEventListener('touchmove', moveProfilePan);
+    document.removeEventListener('touchend', endProfilePan);
+}
+
+function adjustProfileZoom(delta) {
+    const newScale = profileEditorState.scale + delta;
+    profileEditorState.scale = Math.min(Math.max(0.1, newScale), 5);
+    updateProfileTransform();
+}
+
+function updateProfileTransform() {
+    const img = document.getElementById('profileEditorImg');
+    if (img) {
+        img.style.transform = `translate3d(${profileEditorState.pointX}px, ${profileEditorState.pointY}px, 0) scale(${profileEditorState.scale})`;
+    }
+}
+
+// 3. Crop & Save (No changes needed here)
+async function saveProfileCrop() {
+    const btn = document.getElementById('btnSaveProfilePic');
+    btn.innerText = "Processing...";
+    btn.disabled = true;
+
+    try {
+        const croppedBlob = await cropProfileToCanvas();
+
+        if (profileEditorState.mode === 'register') {
+            const reader = new FileReader();
+            reader.onload = function (e) {
+                window.registerProfileBlob = croppedBlob;
+                window.registerProfileBase64 = e.target.result;
+
+                // Update text if element exists
+                const nameEl = document.getElementById('regFileName');
+                if (nameEl) nameEl.innerText = "Photo Ready";
+
+                closeModal('profileUploadModal');
+                btn.innerText = "Save Photo";
+                btn.disabled = false;
+            };
+            reader.readAsDataURL(croppedBlob);
+        } else {
+            btn.innerText = "Uploading...";
+            croppedBlob.name = "profile_" + Date.now() + ".jpg";
+            const url = await uploadFileToStorage(croppedBlob);
+
+            await db.collection('users').doc(currentUser.uid).update({
+                profilePic: url,
+                updatedAt: new Date()
+            });
+
+            if (window.currentUserData) window.currentUserData.profilePic = url;
+
+            loadProfile();
+            updateUserInfo();
+            // syncUserProfileToContent(); // Uncomment if you have this function
+
+            closeModal('profileUploadModal');
+            showToast("Profile Picture Updated!");
+            btn.innerText = "Save Photo";
+            btn.disabled = false;
+        }
+    } catch (e) {
+        console.error(e);
+        alert("Error saving photo.");
+        btn.innerText = "Save Photo";
+        btn.disabled = false;
+    }
+}
+
+function cropProfileToCanvas() {
+    return new Promise((resolve) => {
+        const img = document.getElementById('profileEditorImg');
+        const container = document.getElementById('profileCropperZone');
+
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+
+        canvas.width = 500;
+        canvas.height = 500;
+
+        const imgRect = img.getBoundingClientRect();
+        const boxRect = container.getBoundingClientRect();
+
+        const ratio = canvas.width / boxRect.width;
+
+        const drawX = (imgRect.left - boxRect.left) * ratio;
+        const drawY = (imgRect.top - boxRect.top) * ratio;
+        const drawW = imgRect.width * ratio;
+        const drawH = imgRect.height * ratio;
+
+        ctx.fillStyle = "#000000";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+
+        ctx.drawImage(img, drawX, drawY, drawW, drawH);
+
+        canvas.toBlob((blob) => resolve(blob), 'image/jpeg', 0.9);
+    });
+}
+/* --- NATIVE SHARE FUNCTION --- */
+async function sharePost(postId, postTitle) {
+    triggerHaptic();
+    // 1. Construct a direct link (Mock URL if routing isn't set up yet)
+    const shareUrl = `${window.location.origin}?post=${postId}`;
+
+    const shareData = {
+        title: 'V-SYNC Post',
+        text: postTitle,
+        url: shareUrl
+    };
+
+    // 2. Try Native Share (Mobile)
+    if (navigator.share) {
+        try {
+            await navigator.share(shareData);
+            console.log('Shared successfully');
+        } catch (err) {
+            console.log('Share closed/cancelled');
+        }
+    }
+    // 3. Fallback: Copy to Clipboard (Desktop)
+    else {
+        try {
+            await navigator.clipboard.writeText(shareUrl);
+            // Use your toast function here if you have one, or generic alert
+            if (typeof showToast === 'function') {
+                showToast('Link copied to clipboard!');
+            } else {
+                alert('Link copied to clipboard!');
+            }
+        } catch (err) {
+            console.error('Failed to copy', err);
+        }
+    }
+}
 
 // --- GLOBAL STATE ---
 let currentUser = null; // FIXED: Removed "letlet" typo
@@ -319,11 +581,46 @@ window.activeFilters = {
     tags: []
 };
 
-// --- STARTUP ---
+/* =========================================
+   STARTUP & AUTO-LOGIN LOGIC
+   ========================================= */
+
+// 1. Reset Global State
+currentUser = null;
+currentUserData = null;
+
+// 2. Check for Saved Session
+const savedUid = localStorage.getItem('vsync_uid');
+
+if (savedUid) {
+    // A. User was logged in -> Auto-Login them
+    console.log("Restoring session for:", savedUid);
+    simulateLogin(savedUid, false);
+} else {
+    // B. No saved user -> Show Login Screen
+    document.getElementById('authScreen').classList.remove('hidden');
+    document.getElementById('appScreen').classList.add('hidden');
+}
+
+// 3. Define Logout Function (To clear the save)
+// 3. Define Logout Function (To clear the save)
+window.performLogout = function() {
+    // REPLACED NATIVE CONFIRM WITH CUSTOM MODAL
+    showConfirm(
+        "Log Out?",
+        "Are you sure you want to sign out?",
+        () => {
+            // Clear saved data
+            localStorage.removeItem('vsync_uid');
+            
+            // Reload page to reset everything cleanly
+            window.location.reload();
+        }
+    );
+};
 document.getElementById('authScreen').classList.remove('hidden');
 document.getElementById('appScreen').classList.add('hidden');
 
-loadDevUsers(); // Load users immediately
 
 // 2. Force Show Login Screen, Hide App
 document.getElementById('authScreen').classList.remove('hidden');
@@ -585,25 +882,33 @@ document.getElementById('appScreen').classList.add('hidden');
 
 
 
-// --- 2. UPDATE LOGIN TO START TRACKING ---
 function simulateLogin(uid, isAnonSession) {
     db.collection('users').doc(uid).get().then(doc => {
+        if (!doc.exists) {
+            console.error("User not found during auto-login");
+            localStorage.removeItem('vsync_uid'); // Clean up bad data
+            return;
+        }
+
         const realData = doc.data();
 
         // 1. Create Session Data
         if (isAnonSession) {
             window.currentUserData = {
                 ...realData,
-                // MASKED DATA FOR FRONTEND LOGIC
                 displayNameOverride: "Anonymous",
                 roleOverride: "Guest",
                 profilePicOverride: "",
                 isAnonymousSession: true,
-                realYear: realData.year // Keep real year accessible for logic but not display
+                realYear: realData.year
             };
         } else {
             window.currentUserData = { ...realData, isAnonymousSession: false };
+            
+            // --- 🔹 NEW: SAVE SESSION TO BROWSER ---
+            localStorage.setItem('vsync_uid', uid); 
         }
+        
         window.currentUser = { uid: doc.id };
         currentUser = window.currentUser;
         currentUserData = window.currentUserData;
@@ -612,39 +917,33 @@ function simulateLogin(uid, isAnonSession) {
         document.getElementById('authScreen').classList.add('hidden');
         document.getElementById('appScreen').classList.remove('hidden');
 
-        // 3. UI Restrictions for Anonymous
+        // 3. UI Restrictions & Init
         if (isAnonSession) {
-            // HIDE TABS
-            const tabs = document.querySelectorAll('.tab-button');
-            tabs.forEach(t => {
-                if (t.innerText === "Messages" || t.innerText === "Explore") {
-                    t.style.display = 'none';
-                }
+            // Hide Tabs for Anon
+            document.querySelectorAll('.tab-button').forEach(t => {
+                if (t.innerText === "Messages" || t.innerText === "Explore") t.style.display = 'none';
             });
-
-            // HIDE NAVBAR ICONS
-            const navRight = document.querySelector('.navbar-right');
-            // Hide connection/request icons (first 2 children)
-            navRight.children[0].children[0].classList.add('hidden');
-            navRight.children[0].children[1].classList.add('hidden');
+            document.querySelector('.navbar-right').children[0].children[0].classList.add('hidden');
+            document.querySelector('.navbar-right').children[0].children[1].classList.add('hidden');
 
             updateUserInfo();
             switchTab('community');
         } else {
-            // RESTORE UI (In case of re-login)
+            // Restore UI for User
             document.querySelectorAll('.tab-button').forEach(t => t.style.display = 'block');
-            const navRight = document.querySelector('.navbar-right');
-            navRight.children[0].children[0].classList.remove('hidden');
-            navRight.children[0].children[1].classList.remove('hidden');
+            document.querySelector('.navbar-right').children[0].children[0].classList.remove('hidden');
+            document.querySelector('.navbar-right').children[0].children[1].classList.remove('hidden');
 
             loadActivePoll();
             initMessageBadgeListener();
             updateUserInfo();
-            loadDevUsers();
             initNotificationListener();
             startPresenceHeartbeat();
-            switchTab('community');
+            switchTab('community'); // Start at feed
         }
+    }).catch(err => {
+        console.error("Login failed:", err);
+        showToast("Session expired. Please login again.");
     });
 }
 // --- AUTH: TOGGLE UI ---
@@ -766,7 +1065,7 @@ function handleRegister(e) {
 
     // 1. Get Values & Capitalize Logic
     const isAnon = document.getElementById('regAnon').checked;
-    
+
     // --- NEW NAME LOGIC START ---
     const fNameRaw = document.getElementById('regFirstName').value.trim();
     const lNameRaw = document.getElementById('regLastName').value.trim();
@@ -837,12 +1136,16 @@ function handleRegister(e) {
     };
 
     // 4. Handle File Upload
-    const fileInput = document.getElementById('regFile');
-    if (fileInput.files.length > 0) {
+    if (window.registerProfileBase64) {
+        performRegistration(window.registerProfileBase64);
+    }
+    // 2. Fallback to raw file (if user skipped crop somehow? shouldn't happen)
+    else if (document.getElementById('regFile').files.length > 0) {
         const reader = new FileReader();
         reader.onload = function (e) { performRegistration(e.target.result); };
-        reader.readAsDataURL(fileInput.files[0]);
-    } else {
+        reader.readAsDataURL(document.getElementById('regFile').files[0]);
+    }
+    else {
         performRegistration(null);
     }
 }
@@ -900,82 +1203,48 @@ function initNotificationListener() {
             }
         });
 }
-// --- DEV: LOAD ALL USERS ---
-// --- DEV: LOAD ALL USERS (Fixed) ---
-function loadDevUsers() {
-    const container = document.getElementById('devUserList');
-    container.innerHTML = '<p style="color:#666; font-size:13px;">Loading accounts...</p>';
-
-    // Only fetch real users from Firestore
-    db.collection('users').orderBy('createdAt', 'desc').get().then(snap => {
-        container.innerHTML = ''; // Clear loading text
-
-        if (snap.empty) {
-            container.innerHTML = '<p style="color:var(--text-muted); font-size:13px;">No accounts found.</p>';
-            return;
-        }
-
-        snap.forEach(doc => {
-            const u = doc.data();
-            u.userId = doc.id;
-            container.innerHTML += generateUserButtonHtml(u);
-        });
-    }).catch(e => {
-        console.error("Dev list error:", e);
-        container.innerHTML = '<p style="color:var(--danger-color);">Error loading users.</p>';
-    });
-}
 
 
 async function deleteAccount() {
-    if (!confirm("⚠️ FINAL WARNING: This will delete your account, posts, chats, and connections. This cannot be undone.")) return;
+    // REPLACED NATIVE CONFIRM WITH CUSTOM UI
+    showConfirm(
+        "Delete Account?", 
+        "⚠️ This will permanently delete your profile, posts, and chats. This cannot be undone.", 
+        async () => {
+            const user = auth.currentUser;
+            const userId = user.uid;
 
-    const user = auth.currentUser;
-    const userId = user.uid;
+            try {
+                showToast("Deleting data...");
+                
+                // 1. Delete Posts
+                const postsSnap = await db.collection('posts').where('authorId', '==', userId).get();
+                const batch = db.batch();
+                postsSnap.forEach(doc => batch.delete(doc.ref));
+                await batch.commit();
 
-    try {
-        // 1. Delete My Posts
-        const postsSnap = await db.collection('posts').where('authorId', '==', userId).get();
-        const batch1 = db.batch();
-        postsSnap.forEach(doc => batch1.delete(doc.ref));
-        await batch1.commit();
-        console.log("User posts deleted");
+                // 2. Delete User Doc
+                await db.collection('users').doc(userId).delete();
 
-        // 2. Delete My Chats (and the messages inside)
-        // Note: In a real app we'd delete subcollections recursively, but here we delete the chat doc handle
-        const chatsSnap = await db.collection('chats').where('participants', 'array-contains', userId).get();
-        const batch2 = db.batch();
-        chatsSnap.forEach(doc => batch2.delete(doc.ref));
-        await batch2.commit();
-        console.log("User chats deleted");
+                // 3. Delete Auth
+                await user.delete();
 
-        // 3. Delete Connection Requests (Sent & Received)
-        const sentSnap = await db.collection('connection_requests').where('senderId', '==', userId).get();
-        const recSnap = await db.collection('connection_requests').where('recipientId', '==', userId).get();
-        const batch3 = db.batch();
-        sentSnap.forEach(doc => batch3.delete(doc.ref));
-        recSnap.forEach(doc => batch3.delete(doc.ref));
-        await batch3.commit();
-        console.log("Connections deleted");
+                showToast("✅ Account Deleted");
+                setTimeout(() => {
+                    localStorage.removeItem('vsync_uid');
+                    window.location.reload();
+                }, 1500);
 
-        // 4. Delete User Profile
-        await db.collection('users').doc(userId).delete();
-
-        // 5. Delete Auth Credential
-        await user.delete();
-
-        alert("Account and all associated data deleted.");
-        sessionStorage.clear();
-        window.location.reload();
-
-    } catch (error) {
-        console.error("Error deleting account:", error);
-        if (error.code === 'auth/requires-recent-login') {
-            alert("Security Check: Please log out and log back in, then try deleting your account again.");
-        } else {
-            alert("Failed to delete account: " + error.message);
+            } catch (error) {
+                console.error(error);
+                if (error.code === 'auth/requires-recent-login') {
+                    showToast("⚠️ Security: Please re-login and try again.");
+                } else {
+                    showToast("❌ Delete Failed: " + error.message);
+                }
+            }
         }
-    }
+    );
 }
 
 
@@ -1171,25 +1440,57 @@ async function openSavedPosts() {
     }
 }
 
-function performDeleteChat() {
-    if (contextMenuTarget.type === 'chat') {
-        showConfirm(
-            "Delete Conversation?",
-            "This will delete the chat history permanently.",
-            () => {
-                db.collection('chats').doc(contextMenuTarget.id1).delete().then(() => {
-                    loadChats();
-                    // Clear screen if open
-                    if (document.getElementById('selectedChatId').value === contextMenuTarget.id1) {
-                        document.getElementById('chatHeader').textContent = "Select a chat to begin.";
-                        document.getElementById('messagesContainer').innerHTML = "";
-                        document.getElementById('sendMessageForm').classList.add('hidden');
-                    }
-                });
-            }
-        );
+async function deleteConversation(chatId) {
+    // 1. Double check the ID (Context menu might pass it, or we get it from the hidden input)
+    const activeId = chatId || document.getElementById('selectedChatId').value;
+    if (!activeId) return;
+
+    if (!confirm("Are you sure? This will delete the entire chat history for both users.")) return;
+
+    try {
+        showToast("Deleting conversation...");
+
+        // 2. DELETE SUBCOLLECTION (Messages)
+        // Firestore requires deleting each document in a subcollection individually
+        const messagesSnap = await db.collection('chats').doc(activeId).collection('messages').get();
+        const batch = db.batch();
+        messagesSnap.forEach(doc => {
+            batch.delete(doc.ref);
+        });
+        await batch.commit();
+
+        // 3. DELETE PARENT (The Chat itself)
+        await db.collection('chats').doc(activeId).delete();
+
+        // 4. UI CLEANUP (Prevent the 'null' crash)
+        // We use the ID 'messagesContainer' which matches your HTML
+        const container = document.getElementById('messagesContainer');
+        const sendForm = document.getElementById('sendMessageForm');
+        const header = document.getElementById('chatHeaderInfo');
+
+        if (container) {
+            container.innerHTML = `
+                <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; height:100%; opacity:0.5;">
+                    <span style="font-size:40px;">🗑️</span>
+                    <p>Conversation Deleted</p>
+                </div>`;
+        }
+
+        if (sendForm) sendForm.classList.add('hidden');
+        if (header) header.innerText = "Select a conversation";
+
+        // 5. REFRESH & EXIT
+        showToast("Conversation wiped clean.");
+        loadChats(); // Refresh the list
+        
+        if (window.innerWidth <= 600) {
+            closeChatView(); // Close the mobile view
+        }
+
+    } catch (e) {
+        console.error("Delete failed:", e);
+        alert("Error: " + e.message);
     }
-    hideContextMenu();
 }
 /* --- REPORT ACTIONS --- */
 
@@ -2675,7 +2976,7 @@ function escapeHtml(text) {
 
 
 
-/* --- LOAD COMMUNITY (Fixed: Pinned Comment Avatar, Layout & Double Load) --- */
+/* --- LOAD COMMUNITY (Fixed: Alignment & Spacing) --- */
 async function loadCommunity(forceRefresh = false) {
     const listEl = document.getElementById('communityPostsList');
     if (!listEl) return;
@@ -2683,7 +2984,7 @@ async function loadCommunity(forceRefresh = false) {
 
     // 1. INSTANT LOAD CHECK
     if (!forceRefresh && listEl.children.length > 0 && !listEl.textContent.includes('No posts')) {
-        return; 
+        return;
     }
 
     // 2. PREVENT DOUBLE NETWORK CALLS
@@ -2708,7 +3009,7 @@ async function loadCommunity(forceRefresh = false) {
     }
 
     try {
-        const snap = await db.collection('posts').orderBy('createdAt', 'desc').limit(50).get();
+        const snap = await db.collection('posts').orderBy('createdAt', 'desc').limit(15).get();
         let posts = snap.docs.map(doc => ({ ...doc.data(), id: doc.id }));
 
         // --- FILTERS ---
@@ -2731,7 +3032,8 @@ async function loadCommunity(forceRefresh = false) {
             listEl.innerHTML = `<p style="text-align:center; color:var(--text-secondary); margin-top:30px;">No posts found.</p>`;
             return;
         }
-        loadStories();
+        
+        if (typeof loadStories === 'function') loadStories();
 
         const htmlPromises = posts.map(async p => {
             const isAuthor = currentUser && p.authorId === currentUser.uid;
@@ -2776,17 +3078,17 @@ async function loadCommunity(forceRefresh = false) {
                 let displayFileName = p.fileName || "File";
                 if (!p.fileName && renderType === 'document') {
                     try {
-                        const urlPath = decodeURIComponent(p.imageUrl.split('?')[0]); 
+                        const urlPath = decodeURIComponent(p.imageUrl.split('?')[0]);
                         displayFileName = urlPath.substring(urlPath.lastIndexOf('/') + 1);
-                        if(displayFileName.match(/^\d+_/) && displayFileName.includes('_')) {
-                            displayFileName = displayFileName.split('_').slice(1).join('_'); 
+                        if (displayFileName.match(/^\d+_/) && displayFileName.includes('_')) {
+                            displayFileName = displayFileName.split('_').slice(1).join('_');
                         }
-                    } catch(e){}
+                    } catch (e) { }
                 }
 
                 if (renderType === 'video') {
                     mediaHtml = `<video src="${p.imageUrl}" controls class="post-image" onclick="event.stopPropagation()"></video>`;
-                } 
+                }
                 else if (renderType === 'document') {
                     const sizeStr = typeof formatBytes === 'function' ? formatBytes(p.fileSize || 0) : '';
                     const iconHtml = typeof getFileIcon === 'function' ? getFileIcon(displayFileName) : '📄';
@@ -2798,14 +3100,14 @@ async function loadCommunity(forceRefresh = false) {
                             <div class="file-meta">${sizeStr ? sizeStr + ' • ' : ''}Tap to Download</div>
                         </div>
                     </div>`;
-                } 
+                }
                 else {
                     mediaHtml = `<img src="${p.imageUrl}" loading="lazy" class="post-image" onclick="event.stopPropagation(); openLightbox(this.src)">`;
                 }
             }
 
             // --- HTML ESCAPING ---
-            const safeBody = typeof escapeHtml === 'function' ? escapeHtml(p.body || "") : (p.body || ""); 
+            const safeBody = typeof escapeHtml === 'function' ? escapeHtml(p.body || "") : (p.body || "");
             const processedBody = safeBody.replace(/(https?:\/\/[^\s]+)/g, (url) => `<a href="${url}" target="_blank" style="color:var(--primary-color); text-decoration:underline;">${url}</a>`);
 
             // --- POST AVATAR ---
@@ -2813,7 +3115,7 @@ async function loadCommunity(forceRefresh = false) {
                 ? `<img src="${displayPic}" loading="lazy" class="post-avatar-small">`
                 : `<div class="post-avatar-small" style="background:#333; display:flex; align-items:center; justify-content:center; color:#ccc; font-weight:bold;">${displayName.charAt(0)}</div>`;
 
-            // --- TOP COMMENT (FIXED AVATAR) ---
+            // --- TOP COMMENT ---
             let topCommentHtml = '';
             try {
                 const cSnap = await db.collection('posts').doc(p.id).collection('comments').orderBy('upvotes', 'desc').limit(1).get();
@@ -2821,8 +3123,7 @@ async function loadCommunity(forceRefresh = false) {
                     const c = cSnap.docs[0].data();
                     const safeAuthor = typeof escapeHtml === 'function' ? escapeHtml(c.authorName) : c.authorName;
                     const safeText = typeof escapeHtml === 'function' ? escapeHtml(c.text) : c.text;
-                    
-                    // --- NEW: Comment Avatar Logic ---
+
                     const commentAvatar = c.authorPic
                         ? `<img src="${c.authorPic}" style="width:24px; height:24px; border-radius:50%; object-fit:cover; flex-shrink:0;">`
                         : `<div style="width:24px; height:24px; border-radius:50%; background:#333; color:#ccc; font-size:10px; font-weight:bold; display:flex; align-items:center; justify-content:center; flex-shrink:0;">${(c.authorName || 'U').charAt(0)}</div>`;
@@ -2886,26 +3187,44 @@ async function loadCommunity(forceRefresh = false) {
                         ${topCommentHtml}
                     </div>
 
-                    <div class="card-footer" style="justify-content: space-between; margin-top:15px; align-items:center;">
-                        <button class="btn btn-secondary ${bookmarkClass}" onclick="toggleBookmark(event, '${p.id}')" style="padding: 8px 12px; min-width: 40px; color: ${isBookmarked ? '#FFD700' : 'var(--text-secondary)'};">
-                            <svg width="22" height="22" viewBox="0 0 24 24" fill="${bookmarkFill}" stroke="${bookmarkColor}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"></path>
-                            </svg>
-                        </button>
+                    <div class="card-footer" style="justify-content: space-between; margin-top:15px; align-items:center; display: flex;">
+                        
+                        <div style="display:flex; gap:10px; align-items: center;">
+                            
+                            <button class="btn btn-secondary" onclick="triggerHaptic(); sharePost('${p.id}', '${escapeHtml(p.title).replace(/'/g, "\\'")}')" style="padding: 8px 12px; color: var(--text-secondary); display: flex; align-items: center; justify-content: center;">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <circle cx="18" cy="5" r="3"></circle><circle cx="6" cy="12" r="3"></circle><circle cx="18" cy="19" r="3"></circle>
+                                    <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line>
+                                </svg>
+                            </button>
 
-                        <div style="display:flex; gap:10px;">
-                            <button class="btn btn-secondary" onclick="viewPost('${p.id}')">
-                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:6px;">
+                            <button class="btn btn-secondary ${bookmarkClass}" onclick="toggleBookmark(event, '${p.id}')" style="padding: 8px 12px; min-width: 40px; color: ${isBookmarked ? '#FFD700' : 'var(--text-secondary)'}; display: flex; align-items: center; justify-content: center;">
+                                <svg width="22" height="22" viewBox="0 0 24 24" fill="${bookmarkFill}" stroke="${bookmarkColor}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"></path>
+                                </svg>
+                            </button>
+
+                        </div>
+
+                        <div style="display:flex; gap:20px; align-items: center;">
+                            
+                            <button class="btn btn-secondary" onclick="viewPost('${p.id}')" style="display: flex; align-items: center; gap: 6px;">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                     <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"></path>
                                 </svg>
                                 Comment
                             </button>
-                            <button class="btn ${currentUser && (p.upvoters || []).includes(currentUser.uid) ? 'btn-primary' : 'btn-secondary'}" onclick="handleUpvote(event, '${p.id}')">
-                                ↑ ${p.upvotes || 0}
+
+                            <button class="btn ${currentUser && (p.upvoters || []).includes(currentUser.uid) ? 'btn-primary' : 'btn-secondary'}" 
+                                    onclick="handleUpvote(event, '${p.id}')" 
+                                    style="display: flex; align-items: center; gap: 6px;">
+                                <span>↑</span> 
+                                <span>${p.upvotes || 0}</span>
                             </button>
+
                         </div>
                     </div>
-                </div>`; 
+                </div>`;
 
             // Return wrapper
             return `
@@ -2925,52 +3244,232 @@ async function loadCommunity(forceRefresh = false) {
         isCommunityLoading = false; // RELEASE LOCK
     }
 }
+/* =========================================
+   EVENT ADMIN: EDIT & MANAGE LOGIC
+   ========================================= */
 
-// --- 2. FILTER & SORT UI LOGIC ---
-// --- FIXED UPVOTE HANDLER ---
-window.handleUpvote = function (event, postId) {
-    triggerHaptic();
-    event.stopPropagation(); // Prevent opening the post details
+// State to track the specific event being edited
+let editEventState = {
+    id: null,
+    currentImages: [] // Array of image URLs (strings)
+};
 
-    // 1. Anon Check
-    if (window.currentUserData && window.currentUserData.isAnonymousSession) {
-        if (typeof showToast === 'function') showToast("Restricted: Cannot upvote as Anonymous.");
-        else alert("Restricted.");
+// 1. OPEN MODAL & LOAD DATA
+function openEditEvent(eventId) {
+    console.log("Opening edit for:", eventId); // Debugging check
+
+    // Find the event object in your cache
+    if (!window.allEventsCache) {
+        console.error("No events cache found");
         return;
     }
 
-    const btn = event.currentTarget;
-    const isUpvoted = btn.classList.contains('btn-primary');
-    const ref = db.collection('posts').doc(postId);
+    const event = window.allEventsCache.find(e => e.id === eventId);
+    if (!event) {
+        alert("Event data not found!");
+        return;
+    }
 
-    // 2. UI Update (Immediate Visual Feedback)
-    // Extract the current number from text "↑ 5" -> 5
-    let count = parseInt(btn.innerText.replace(/\D/g, '')) || 0;
+    // Set State
+    editEventState.id = eventId;
+    editEventState.currentImages = event.Images || []; // Handles case where Images is undefined
 
-    if (isUpvoted) {
-        // Remove Upvote
-        btn.classList.remove('btn-primary');
-        btn.classList.add('btn-secondary');
-        btn.innerText = `↑ ${Math.max(0, count - 1)}`;
+    // Populate Form Fields
+    document.getElementById('editEventId').value = eventId;
+    document.getElementById('editEventTitle').value = event.Title || '';
+    document.getElementById('editEventDesc').value = event.Description || '';
+    
+    // Handle Date (Convert "Oct 24, 2025" or Timestamp to "YYYY-MM-DD" for input)
+    // If your data is already "YYYY-MM-DD", just use it. Otherwise, simple check:
+    let dateVal = event.Date || '';
+    if(dateVal && !dateVal.includes('-')) {
+        // Try to parse if it's not in ISO format
+        const d = new Date(dateVal);
+        if(!isNaN(d)) dateVal = d.toISOString().split('T')[0];
+    }
+    document.getElementById('editEventDate').value = dateVal;
 
-        // DB Update (Background)
-        ref.update({
-            upvotes: firebase.firestore.FieldValue.increment(-1),
-            upvoters: firebase.firestore.FieldValue.arrayRemove(currentUser.uid)
-        });
-    } else {
-        // Add Upvote
-        btn.classList.remove('btn-secondary');
-        btn.classList.add('btn-primary');
-        btn.innerText = `↑ ${count + 1}`;
+    document.getElementById('editEventTime').value = event.Time || '';
+    document.getElementById('editEventLoc').value = event.Location || '';
+    document.getElementById('editEventLink').value = event.RegLink || event.Link || '';
 
-        // DB Update (Background)
-        ref.update({
-            upvotes: firebase.firestore.FieldValue.increment(1),
-            upvoters: firebase.firestore.FieldValue.arrayUnion(currentUser.uid)
+    // Clear previous "New File" inputs
+    const fileInput = document.getElementById('editEventNewFiles');
+    if(fileInput) fileInput.value = "";
+    document.getElementById('editEventNewPreview').innerHTML = "";
+
+    // Show Images
+    renderEditImages();
+
+    // Show Modal
+    const modal = document.getElementById('editEventModal');
+    if(modal) modal.classList.add('active');
+}
+
+// 2. RENDER EXISTING IMAGE THUMBNAILS
+function renderEditImages() {
+    const container = document.getElementById('editEventImagesList');
+    if (!container) return;
+
+    container.innerHTML = '';
+
+    if (editEventState.currentImages.length === 0) {
+        container.innerHTML = `<span style="font-size:12px; color:#666; font-style:italic;">No existing images.</span>`;
+        return;
+    }
+
+    editEventState.currentImages.forEach((url, index) => {
+        const div = document.createElement('div');
+        div.style.cssText = "position: relative; width: 70px; height: 70px; border-radius: 8px; overflow: hidden; border:1px solid #333;";
+        
+        div.innerHTML = `
+            <img src="${url}" style="width: 100%; height: 100%; object-fit: cover;">
+            <div onclick="removeEventImage(${index})" 
+                 style="position: absolute; top: 2px; right: 2px; background: rgba(0,0,0,0.8); color: white; border-radius: 50%; width: 20px; height: 20px; display: flex; align-items: center; justify-content: center; font-size: 10px; cursor: pointer; border: 1px solid rgba(255,255,255,0.3); z-index:5;">
+                 ✕
+            </div>
+        `;
+        container.appendChild(div);
+    });
+}
+
+// 3. REMOVE IMAGE (LOCALLY)
+function removeEventImage(index) {
+    if (confirm("Remove this image? (Changes will apply when you click Save)")) {
+        editEventState.currentImages.splice(index, 1);
+        renderEditImages();
+    }
+}
+
+// 4. PREVIEW NEW UPLOADS
+function previewEditEventNewImages(input) {
+    const preview = document.getElementById('editEventNewPreview');
+    preview.innerHTML = '';
+    
+    if (input.files && input.files.length > 0) {
+        Array.from(input.files).forEach(file => {
+            const url = URL.createObjectURL(file);
+            preview.innerHTML += `<img src="${url}" style="width: 50px; height: 50px; border-radius: 6px; object-fit: cover; border: 1px solid #333; margin-right:5px;">`;
         });
     }
-};
+}
+
+// 5. SAVE CHANGES TO FIRESTORE
+async function saveEventChanges() {
+    const btn = document.getElementById('btnSaveEventChanges');
+    btn.innerText = "Saving...";
+    btn.disabled = true;
+
+    try {
+        const eventId = editEventState.id;
+        if(!eventId) throw new Error("No Event ID found");
+
+        // A. Upload NEW images (if any)
+        const newFilesInput = document.getElementById('editEventNewFiles');
+        let newUrls = [];
+        
+        if (newFilesInput && newFilesInput.files.length > 0) {
+            for (let i = 0; i < newFilesInput.files.length; i++) {
+                const file = newFilesInput.files[i];
+                // Unique path: events/ID_timestamp_index
+                const path = `events/${eventId}_${Date.now()}_${i}`;
+                const storageRef = firebase.storage().ref(path); // Ensure 'firebase' or 'storage' var is correct
+                await storageRef.put(file);
+                const url = await storageRef.getDownloadURL();
+                newUrls.push(url);
+            }
+        }
+
+        // B. Combine Old + New Images
+        const finalImages = [...editEventState.currentImages, ...newUrls];
+
+        // C. Update Firestore Document
+        await db.collection('events').doc(eventId).update({
+            Title: document.getElementById('editEventTitle').value,
+            Description: document.getElementById('editEventDesc').value,
+            Date: document.getElementById('editEventDate').value,
+            Time: document.getElementById('editEventTime').value,
+            Location: document.getElementById('editEventLoc').value,
+            RegLink: document.getElementById('editEventLink').value,
+            Images: finalImages
+        });
+
+        // D. Success & Refresh
+        showToast("Event updated successfully!");
+        closeModal('editEventModal');
+        
+        // Reload events to show changes
+        if(typeof loadEvents === 'function') loadEvents();
+
+    } catch (e) {
+        console.error("Save Error:", e);
+        alert("Failed to update event: " + e.message);
+    } finally {
+        btn.innerText = "Save Changes";
+        btn.disabled = false;
+    }
+}
+
+/* --- HANDLE UPVOTE (Fixed: Preserves Layout) --- */
+function handleUpvote(event, postId) {
+    triggerHaptic();
+    event.stopPropagation(); // Stop clicking the post behind the button
+    
+    if (!currentUser) {
+        showToast("Please login to vote");
+        return;
+    }
+
+    const btn = event.currentTarget; // The button you clicked
+    const isUpvoted = btn.classList.contains('btn-primary'); // Blue = already upvoted
+    
+    // 1. Get current number safely
+    // We look for the second <span> because that holds the number now
+    let countSpan = btn.querySelector('span:last-child');
+    let currentCount = parseInt(countSpan ? countSpan.innerText : (btn.innerText.replace('↑', '').trim() || "0"));
+
+    // 2. Optimistic UI Update (Change look instantly)
+    if (isUpvoted) {
+        // Remove Vote
+        currentCount = Math.max(0, currentCount - 1);
+        btn.classList.remove('btn-primary');
+        btn.classList.add('btn-secondary');
+        
+        // Remove ID from local tracker
+        if (window.currentUserData && window.currentUserData.upvotedPosts) {
+             window.currentUserData.upvotedPosts = window.currentUserData.upvotedPosts.filter(id => id !== postId);
+        }
+    } else {
+        // Add Vote
+        currentCount++;
+        btn.classList.remove('btn-secondary');
+        btn.classList.add('btn-primary');
+        triggerHaptic(); // Nice vibration
+        
+        // Add ID to local tracker
+        if (window.currentUserData) {
+            if (!window.currentUserData.upvotedPosts) window.currentUserData.upvotedPosts = [];
+            window.currentUserData.upvotedPosts.push(postId);
+        }
+    }
+
+    // 3. RE-RENDER HTML CORRECTLY (Preserve the Spans!)
+    btn.innerHTML = `<span>↑</span> <span>${currentCount}</span>`;
+
+    // 4. Send to Database
+    const docRef = db.collection('posts').doc(postId);
+    if (isUpvoted) {
+        docRef.update({
+            upvotes: firebase.firestore.FieldValue.increment(-1),
+            upvoters: firebase.firestore.FieldValue.arrayRemove(currentUser.uid)
+        }).catch(err => console.error(err));
+    } else {
+        docRef.update({
+            upvotes: firebase.firestore.FieldValue.increment(1),
+            upvoters: firebase.firestore.FieldValue.arrayUnion(currentUser.uid)
+        }).catch(err => console.error(err));
+    }
+}
 
 function openSortModal() {
     lockScroll();
@@ -3009,10 +3508,10 @@ window.closeModal = function (modalId) {
     setTimeout(() => {
         modal.classList.remove('active');
         modal.classList.remove('closing');
-        
+
         // --- EXTRA CLEANUP ---
-        if (content) content.style.transform = ''; 
-        
+        if (content) content.style.transform = '';
+
         unlockScroll();
     }, 280);
 };
@@ -3422,11 +3921,11 @@ function deletePost(postId) {
                     card.style.transition = "all 0.3s ease";
                     card.style.opacity = "0";
                     card.style.transform = "scale(0.9)";
-                    
+
                     // Remove after animation finishes
                     setTimeout(() => {
                         card.remove();
-                        
+
                         // Optional: If list becomes empty, show the "No posts" message
                         const listEl = document.getElementById('communityPostsList');
                         if (listEl && listEl.children.length === 0) {
@@ -3705,7 +4204,7 @@ function loadStories() {
 
     // Reset Container: Keep only the "Add Story" button
     const addBtn = container.querySelector('.story-item[onclick="openStoryUploadModal()"]');
-    container.innerHTML = ''; 
+    container.innerHTML = '';
     if (addBtn) container.appendChild(addBtn);
     else {
         // Re-create Add Button if lost
@@ -3724,7 +4223,7 @@ function loadStories() {
     // Update My Avatar on the Add Button
     const myPic = window.currentUserData.profilePic;
     const myPlaceholder = document.getElementById('myStoryAvatar');
-    if(myPic && myPlaceholder) {
+    if (myPic && myPlaceholder) {
         myPlaceholder.innerHTML = `<img src="${myPic}" style="width:100%; height:100%; border-radius:50%; object-fit:cover;">`;
         myPlaceholder.innerHTML += `<div style="position:absolute; bottom:0; right:0; background:var(--primary-color); color:white; width:20px; height:20px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:14px; border:2px solid var(--bg-card);">+</div>`;
     }
@@ -3732,62 +4231,62 @@ function loadStories() {
     const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000);
 
     db.collection('stories')
-      .where('createdAt', '>', yesterday)
-      .orderBy('createdAt', 'asc')
-      .get()
-      .then(async (snap) => {
-          const storiesByUser = {};
+        .where('createdAt', '>', yesterday)
+        .orderBy('createdAt', 'asc')
+        .get()
+        .then(async (snap) => {
+            const storiesByUser = {};
 
-          snap.forEach(doc => {
-              const s = doc.data();
-              // Privacy Filter: Skip if private and not mine
-              if(s.isPrivate && s.userId !== currentUser.uid) return; 
+            snap.forEach(doc => {
+                const s = doc.data();
+                // Privacy Filter: Skip if private and not mine
+                if (s.isPrivate && s.userId !== currentUser.uid) return;
 
-              if (!storiesByUser[s.userId]) {
-                  storiesByUser[s.userId] = {
-                      user: { name: s.userName, pic: s.userPic, id: s.userId },
-                      items: [],
-                      hasUnseen: false
-                  };
-              }
-              storiesByUser[s.userId].items.push({ ...s, id: doc.id });
+                if (!storiesByUser[s.userId]) {
+                    storiesByUser[s.userId] = {
+                        user: { name: s.userName, pic: s.userPic, id: s.userId },
+                        items: [],
+                        hasUnseen: false
+                    };
+                }
+                storiesByUser[s.userId].items.push({ ...s, id: doc.id });
 
-              if (!s.viewers || !s.viewers.includes(currentUser.uid)) {
-                  storiesByUser[s.userId].hasUnseen = true;
-              }
-          });
+                if (!s.viewers || !s.viewers.includes(currentUser.uid)) {
+                    storiesByUser[s.userId].hasUnseen = true;
+                }
+            });
 
-          const sortedGroups = Object.values(storiesByUser).sort((a, b) => {
-              // Your story first? Or Unseen first? Let's do Unseen first.
-              if (a.hasUnseen && !b.hasUnseen) return -1;
-              if (!a.hasUnseen && b.hasUnseen) return 1;
-              return 0; 
-          });
+            const sortedGroups = Object.values(storiesByUser).sort((a, b) => {
+                // Your story first? Or Unseen first? Let's do Unseen first.
+                if (a.hasUnseen && !b.hasUnseen) return -1;
+                if (!a.hasUnseen && b.hasUnseen) return 1;
+                return 0;
+            });
 
-          sortedGroups.forEach(group => {
-              const ringClass = group.hasUnseen ? 'story-ring unseen' : 'story-ring';
-              const name = group.user.id === currentUser.uid ? 'Your Story' : group.user.name;
+            sortedGroups.forEach(group => {
+                const ringClass = group.hasUnseen ? 'story-ring unseen' : 'story-ring';
+                const name = group.user.id === currentUser.uid ? 'Your Story' : group.user.name;
 
-              const div = document.createElement('div');
-              div.className = 'story-item';
-              // Add ID for easy removal later
-              div.id = `story-bubble-${group.user.id}`;
-              div.onclick = (e) => openStoryViewer(group, e.currentTarget);
-              
-              const picHtml = group.user.pic 
-                  ? `<img src="${group.user.pic}" class="story-avatar">`
-                  : `<div class="story-avatar" style="background:#333; display:flex; align-items:center; justify-content:center;">${name.charAt(0)}</div>`;
+                const div = document.createElement('div');
+                div.className = 'story-item';
+                // Add ID for easy removal later
+                div.id = `story-bubble-${group.user.id}`;
+                div.onclick = (e) => openStoryViewer(group, e.currentTarget);
 
-              div.innerHTML = `
+                const picHtml = group.user.pic
+                    ? `<img src="${group.user.pic}" class="story-avatar">`
+                    : `<div class="story-avatar" style="background:#333; display:flex; align-items:center; justify-content:center;">${name.charAt(0)}</div>`;
+
+                div.innerHTML = `
                   <div class="story-ring-wrapper">
                       <div class="${ringClass}"></div>
                       ${picHtml}
                   </div>
                   <span class="story-name">${name}</span>
               `;
-              container.appendChild(div);
-          });
-      });
+                container.appendChild(div);
+            });
+        });
 }
 
 // 2. UPLOAD LOGIC
@@ -3815,7 +4314,7 @@ function resetEditor() {
 function initEditorGestures(el) {
     el.onmousedown = startPan;
     el.ontouchstart = startPan;
-    
+
     // Zoom on wheel
     el.onwheel = (e) => {
         e.preventDefault();
@@ -3829,7 +4328,7 @@ function startPan(e) {
     editorState.panning = true;
     editorState.startX = (e.clientX || e.touches[0].clientX) - editorState.pointX;
     editorState.startY = (e.clientY || e.touches[0].clientY) - editorState.pointY;
-    
+
     document.addEventListener('mousemove', movePan);
     document.addEventListener('touchmove', movePan, { passive: false });
     document.addEventListener('mouseup', endPan);
@@ -3841,10 +4340,10 @@ function movePan(e) {
     e.preventDefault();
     const clientX = e.clientX || e.touches[0].clientX;
     const clientY = e.clientY || e.touches[0].clientY;
-    
+
     editorState.pointX = clientX - editorState.startX;
     editorState.pointY = clientY - editorState.startY;
-    
+
     updateEditorTransform();
 }
 
@@ -3863,7 +4362,7 @@ function adjustZoom(delta) {
 
 function updateEditorTransform() {
     const img = document.getElementById('storyEditorImg');
-    if(img) {
+    if (img) {
         img.style.transform = `translate(${editorState.pointX}px, ${editorState.pointY}px) scale(${editorState.scale})`;
     }
 }
@@ -3883,7 +4382,7 @@ function handleStoryFileSelect(input) {
     if (input.files && input.files[0]) {
         storyFileToUpload = input.files[0];
         const url = URL.createObjectURL(storyFileToUpload);
-        
+
         const img = document.getElementById('storyEditorImg');
         const vid = document.getElementById('storyEditorVideo');
         const placeholder = document.getElementById('storyPlaceholder');
@@ -3903,7 +4402,7 @@ function handleStoryFileSelect(input) {
             img.src = url;
             img.style.display = 'block';
             zoomCtrl.style.display = 'flex';
-            
+
             // Initialize Position (Center)
             img.onload = () => {
                 editorState.pointX = 0;
@@ -3912,17 +4411,17 @@ function handleStoryFileSelect(input) {
                 updateEditorTransform();
             };
         }
-        
+
         placeholder.style.display = 'none';
         document.getElementById('btnPostStory').disabled = false;
-        
+
         // Init Gestures
         initEditorGestures(img);
     }
 }
 async function uploadStory() {
     if (!storyFileToUpload) return;
-    
+
     const btn = document.getElementById('btnPostStory');
     btn.innerText = "Processing...";
     btn.disabled = true;
@@ -3936,10 +4435,10 @@ async function uploadStory() {
         }
 
         const isPrivate = document.getElementById('storyPrivacyToggle').checked;
-        
+
         btn.innerText = "Uploading...";
         const mediaUrl = await uploadFileToStorage(finalFile);
-        
+
         await db.collection('stories').add({
             userId: currentUser.uid,
             userName: window.currentUserData.name,
@@ -3954,7 +4453,7 @@ async function uploadStory() {
 
         closeModal('storyUploadModal');
         btn.innerText = "Post Story";
-        loadStories(); 
+        loadStories();
         showToast("Story Added!");
 
     } catch (e) {
@@ -3971,7 +4470,7 @@ function cropImageToCanvas() {
     return new Promise((resolve) => {
         const img = document.getElementById('storyEditorImg');
         const cropBox = document.getElementById('storyCropArea');
-        
+
         // 1. Setup High-Res Canvas (9:16)
         const canvas = document.createElement('canvas');
         const ctx = canvas.getContext('2d');
@@ -3990,7 +4489,7 @@ function cropImageToCanvas() {
         // (imgRect.left - cropRect.left) is the distance from the left edge of the crop box
         const relativeX = (imgRect.left - cropRect.left) * scaleFactor;
         const relativeY = (imgRect.top - cropRect.top) * scaleFactor;
-        
+
         const relativeWidth = imgRect.width * scaleFactor;
         const relativeHeight = imgRect.height * scaleFactor;
 
@@ -4004,7 +4503,7 @@ function cropImageToCanvas() {
 
         // 7. Export
         canvas.toBlob((blob) => {
-            blob.name = "story_" + Date.now() + ".jpg"; 
+            blob.name = "story_" + Date.now() + ".jpg";
             resolve(blob);
         }, 'image/jpeg', 0.90);
     });
@@ -4013,9 +4512,9 @@ function cropImageToCanvas() {
 let lastStoryOrigin = null;
 function openStoryViewer(group, sourceElement) {
     activeStoryGroup = group;
-    
+
     // 1. Calculate Start Index (First Unseen)
-    currentStoryIndex = group.items.findIndex(item => 
+    currentStoryIndex = group.items.findIndex(item =>
         !item.viewers || !item.viewers.includes(currentUser.uid)
     );
     if (currentStoryIndex === -1) currentStoryIndex = 0;
@@ -4028,21 +4527,21 @@ function openStoryViewer(group, sourceElement) {
         // Find center of the clicked bubble
         const centerX = rect.left + (rect.width / 2);
         const centerY = rect.top + (rect.height / 2);
-        
+
         // Apply origin to the modal so it grows FROM this point
         modal.style.transformOrigin = `${centerX}px ${centerY}px`;
-        
+
         // Save for closing animation
-        lastStoryOrigin = `${centerX}px ${centerY}px`; 
+        lastStoryOrigin = `${centerX}px ${centerY}px`;
     }
 
     // 3. ACTIVATE & ANIMATE
     modal.classList.remove('story-zoom-out'); // Safety reset
     modal.classList.add('active'); // Make visible (display: flex)
-    
+
     // Force Reflow (flush CSS changes before adding animation class)
-    void modal.offsetWidth; 
-    
+    void modal.offsetWidth;
+
     modal.classList.add('story-zoom-in');
 
     // 4. Clean up animation class after it finishes (clean state)
@@ -4059,11 +4558,11 @@ function openStoryViewer(group, sourceElement) {
 /* --- ANIMATED STORY CLOSER (Fixed: No Flicker) --- */
 function closeStoryViewer() {
     const modal = document.getElementById('storyViewerModal');
-    
+
     // 1. Pause Content
     clearTimeout(storyTimer);
     const vid = document.querySelector('#storyViewContent video');
-    if(vid) vid.pause();
+    if (vid) vid.pause();
 
     // 2. Set Origin (Use the one we saved when opening)
     if (lastStoryOrigin) {
@@ -4078,16 +4577,16 @@ function closeStoryViewer() {
     setTimeout(() => {
         modal.classList.remove('active');       // Hide display
         modal.classList.remove('story-zoom-out'); // Reset anim class
-        
+
         // Reset properties
         modal.style.transform = '';
         modal.style.opacity = '';
         modal.style.borderRadius = '';
-        
+
         // 5. UPDATE RING COLOR LOCALLY (Instead of reloading everything)
         updateLocalStoryRing();
-        
-    }, 300); 
+
+    }, 300);
 }
 
 /* --- HELPER: Turn Ring Grey without Reloading --- */
@@ -4096,7 +4595,7 @@ function updateLocalStoryRing() {
 
     // Check if we have seen EVERYTHING in this group
     // We check our local data which was updated in renderStoryFrame
-    const stillHasUnseen = activeStoryGroup.items.some(item => 
+    const stillHasUnseen = activeStoryGroup.items.some(item =>
         !item.viewers || !item.viewers.includes(currentUser.uid)
     );
 
@@ -4107,7 +4606,7 @@ function updateLocalStoryRing() {
             const ring = bubble.querySelector('.story-ring');
             if (ring) {
                 // Remove the blue gradient class
-                ring.classList.remove('unseen'); 
+                ring.classList.remove('unseen');
                 // It will revert to the default CSS border (grey)
             }
         }
@@ -4140,7 +4639,7 @@ function renderStoryFrame() {
     let barsHtml = '';
     activeStoryGroup.items.forEach((_, idx) => {
         let width = '0%';
-        if (idx < currentStoryIndex) width = '100%'; 
+        if (idx < currentStoryIndex) width = '100%';
         barsHtml += `
         <div class="progress-segment" style="flex:1; height:2px; background:rgba(255,255,255,0.3); margin:0 2px; border-radius:2px; overflow:hidden;">
             <div class="progress-fill" id="bar-${idx}" style="width:${width}; height:100%; background:white;"></div>
@@ -4154,17 +4653,17 @@ function renderStoryFrame() {
         const vid = contentDiv.querySelector('video');
         vid.onended = nextStory;
         vid.ontimeupdate = () => {
-             const pct = (vid.currentTime / vid.duration) * 100;
-             const bar = document.getElementById(`bar-${currentStoryIndex}`);
-             if(bar) {
-                 bar.style.transition = "width 0.1s linear";
-                 bar.style.width = `${pct}%`;
-             }
+            const pct = (vid.currentTime / vid.duration) * 100;
+            const bar = document.getElementById(`bar-${currentStoryIndex}`);
+            if (bar) {
+                bar.style.transition = "width 0.1s linear";
+                bar.style.width = `${pct}%`;
+            }
         };
     } else {
         contentDiv.innerHTML = `<img src="${story.mediaUrl}" class="story-media-fullscreen">`;
         const bar = document.getElementById(`bar-${currentStoryIndex}`);
-        if(bar) {
+        if (bar) {
             bar.style.transition = "none";
             bar.style.width = "0%";
             setTimeout(() => {
@@ -4180,7 +4679,7 @@ function renderStoryFrame() {
         db.collection('stories').doc(story.id).update({
             viewers: firebase.firestore.FieldValue.arrayUnion(currentUser.uid)
         });
-        if(!story.viewers) story.viewers = [];
+        if (!story.viewers) story.viewers = [];
         story.viewers.push(currentUser.uid);
     }
 }
@@ -4207,7 +4706,7 @@ function prevStory() {
 }
 function toggleStoryMenu(event) {
     event.stopPropagation();
-    
+
     const menu = document.getElementById('storyOptionsMenu');
     const isActive = menu.classList.contains('active');
 
@@ -4226,7 +4725,7 @@ function deleteCurrentStory() {
 
     // 2. Custom App Confirmation (No Native Prompt)
     showConfirm(
-        "Delete Story?", 
+        "Delete Story?",
         "This will disappear forever.",
         () => {
             // CONFIRMED ACTION
@@ -4246,7 +4745,7 @@ function deleteCurrentStory() {
             if (activeStoryGroup.items.length === 0) {
                 // User has no more stories
                 closeStoryViewer();
-                
+
                 // FORCE REMOVE BUBBLE FROM DOM IMMEDIATELY
                 const bubble = document.getElementById(`story-bubble-${userId}`);
                 if (bubble) bubble.remove();
@@ -4260,7 +4759,7 @@ function deleteCurrentStory() {
             }
         }
     );
-    
+
     // Note: If user clicks "Cancel" in showConfirm, the story stays paused.
     // They can simply tap next/prev to resume.
 }
@@ -4268,12 +4767,12 @@ function deleteCurrentStory() {
 function pauseStoryPlayback() {
     clearTimeout(storyTimer);
     const vid = document.querySelector('#storyViewContent video');
-    if(vid) vid.pause();
+    if (vid) vid.pause();
 }
 
 function resumeStoryPlayback() {
     const vid = document.querySelector('#storyViewContent video');
-    if(vid) {
+    if (vid) {
         vid.play();
     } else {
         storyTimer = setTimeout(nextStory, 3000); // Give 3s buffer
@@ -4297,7 +4796,7 @@ function renderStoryFrame() {
     let barsHtml = '';
     activeStoryGroup.items.forEach((_, idx) => {
         let width = '0%';
-        if (idx < currentStoryIndex) width = '100%'; 
+        if (idx < currentStoryIndex) width = '100%';
         barsHtml += `
         <div class="progress-segment" style="flex:1; height:2px; background:rgba(255,255,255,0.3); margin:0 2px; border-radius:2px; overflow:hidden;">
             <div class="progress-fill" id="bar-${idx}" style="width:${width}; height:100%; background:white;"></div>
@@ -4308,9 +4807,9 @@ function renderStoryFrame() {
     // --- NEW: SHOW/HIDE 3-DOTS BUTTON ---
     const menuWrapper = document.getElementById('storyMenuWrapper');
     const menu = document.getElementById('storyOptionsMenu');
-    
+
     // Always close menu when swiping to new story
-    if(menu) menu.classList.remove('active'); 
+    if (menu) menu.classList.remove('active');
 
     if (story.userId === currentUser.uid) {
         menuWrapper.style.display = 'block';
@@ -4325,17 +4824,17 @@ function renderStoryFrame() {
         const vid = contentDiv.querySelector('video');
         vid.onended = nextStory;
         vid.ontimeupdate = () => {
-             const pct = (vid.currentTime / vid.duration) * 100;
-             const bar = document.getElementById(`bar-${currentStoryIndex}`);
-             if(bar) {
-                 bar.style.transition = "width 0.1s linear";
-                 bar.style.width = `${pct}%`;
-             }
+            const pct = (vid.currentTime / vid.duration) * 100;
+            const bar = document.getElementById(`bar-${currentStoryIndex}`);
+            if (bar) {
+                bar.style.transition = "width 0.1s linear";
+                bar.style.width = `${pct}%`;
+            }
         };
     } else {
         contentDiv.innerHTML = `<img src="${story.mediaUrl}" class="story-media-fullscreen">`;
         const bar = document.getElementById(`bar-${currentStoryIndex}`);
-        if(bar) {
+        if (bar) {
             bar.style.transition = "none";
             bar.style.width = "0%";
             setTimeout(() => {
@@ -4351,7 +4850,7 @@ function renderStoryFrame() {
         db.collection('stories').doc(story.id).update({
             viewers: firebase.firestore.FieldValue.arrayUnion(currentUser.uid)
         });
-        if(!story.viewers) story.viewers = [];
+        if (!story.viewers) story.viewers = [];
         story.viewers.push(currentUser.uid);
     }
 }
@@ -4616,11 +5115,13 @@ function submitManualEvent() {
 /* --- RENDERER (Handles Filter/Sort Logic) --- */
 function renderEventsList() {
     const listEl = document.getElementById('eventsList');
+    // Ensure we have data
+    if (!window.allEventsCache) return;
+    
     let events = [...window.allEventsCache]; // Copy array
 
     // A. FILTERING
     if (window.currentEventFilter === 'campus') {
-        // Filter logic: Check if Location or Title contains keywords
         events = events.filter(e => {
             const loc = (e.Location || "").toLowerCase();
             const src = (e.sourceName || "").toLowerCase();
@@ -4636,9 +5137,9 @@ function renderEventsList() {
 
     // B. SORTING
     if (window.currentEventSort === 'soon') {
-        events.sort((a, b) => a.timestamp - b.timestamp); // Ascending (Smallest/Soonest timestamp first)
+        events.sort((a, b) => a.timestamp - b.timestamp); 
     } else {
-        events.sort((a, b) => b.timestamp - a.timestamp); // Descending
+        events.sort((a, b) => b.timestamp - a.timestamp); 
     }
 
     // C. HTML GENERATION
@@ -4646,6 +5147,10 @@ function renderEventsList() {
         listEl.innerHTML = '<div class="empty-state-new" style="margin-top:20px;">No events match your filter.</div>';
         return;
     }
+
+    // D. CHECK ADMIN STATUS
+    // We check if the current user is an admin to decide if we show the pencil icon
+    const isAdmin = currentUser && typeof ADMIN_UIDS !== 'undefined' && ADMIN_UIDS.includes(currentUser.uid);
 
     let html = '';
     events.forEach(e => {
@@ -4655,17 +5160,26 @@ function renderEventsList() {
             finalLink = e.sourceUrl || "#";
         }
 
-        // Logo Logic (Fallback to a generic icon if missing)
+        // Logo Logic
         const logoImg = e.sourceLogo || "https://cdn-icons-png.flaticon.com/512/1005/1005141.png";
 
         // Date Badge Color logic
         let dateBadgeColor = "var(--primary-color)";
 
+        // --- ADMIN BUTTON HTML ---
+        // This creates a small floating circle button in the top-right
+        const editBtn = isAdmin ? `
+            <button onclick="openEditEvent('${e.id}')" 
+                style="position: absolute; top: 10px; right: 10px; z-index: 10; width: 30px; height: 30px; border-radius: 50%; border:none; background: rgba(0,0,0,0.1); color: var(--text-main); display: flex; align-items: center; justify-content: center; cursor: pointer;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+            </button>
+        ` : '';
+
+        // Added 'position: relative' to the main card div so the edit button is positioned correctly
         html += `
-        <div class="card" style="padding:0; overflow:hidden; border:1px solid var(--border-color); display:flex; flex-direction:column;">
+        <div class="card" style="padding:0; overflow:hidden; border:1px solid var(--border-color); display:flex; flex-direction:column; position: relative;">
             
-            <div style="display:flex; padding:15px; gap:15px;">
-                <div style="width:60px; height:60px; flex-shrink:0; background:#fff; border-radius:12px; padding:5px; display:flex; align-items:center; justify-content:center;">
+            ${editBtn} <div style="display:flex; padding:15px; gap:15px; padding-right: 40px;"> <div style="width:60px; height:60px; flex-shrink:0; background:#fff; border-radius:12px; padding:5px; display:flex; align-items:center; justify-content:center;">
                     <img src="${logoImg}" style="width:100%; height:100%; object-fit:contain;">
                 </div>
 
@@ -4753,6 +5267,23 @@ function upvoteComment(pid, cid) { const ref = db.collection('posts').doc(pid).c
 function loadProfile() {
     // 1. SAFETY CHECK
     if (!currentUser) return;
+    let adminBtnHtml = '';
+if (currentUser && typeof ADMIN_UIDS !== 'undefined' && ADMIN_UIDS.includes(currentUser.uid)) {
+    adminBtnHtml = `
+    <button class="btn-new" onclick="openAdminPanel()" 
+        style="grid-column: 1 / -1; background: rgba(255, 69, 58, 0.15); color: #ff453a; border: 1px solid #ff453a; margin-top: 10px;">
+        👮‍♂️ Admin Dashboard
+    </button>`;
+}
+const actionContainer = document.getElementById('profileActionButtons');
+if (actionContainer) {
+    actionContainer.innerHTML = `
+        <button class="btn-new btn-primary-new" onclick="toggleEditMode()">Edit</button>
+        <button class="btn-new btn-secondary-new" onclick="openSavedPosts()">Saved</button>
+        <button class="btn-new btn-secondary-new" onclick="shareProfile()">Share</button>
+        ${adminBtnHtml}
+    `;
+}
 
     // 2. ANONYMOUS CHECK
     if (window.currentUserData && window.currentUserData.isAnonymousSession) {
@@ -5004,12 +5535,19 @@ function adminResetScores() {
         });
 }
 function triggerHaptic() {
-
-    if (navigator.vibrate) {
-        navigator.vibrate(15);
+    // 1. Check if hardware supports it
+    if (!window.navigator || !window.navigator.vibrate) {
+        console.log("Haptic not supported on this device.");
+        return;
     }
-}
 
+    // 2. FORCE VIBRATION (50ms is a solid "tick")
+    // Using an array [50] helps bypass some browser restrictions
+    const success = window.navigator.vibrate([50]);
+    
+    // Debug log to console (Connect phone to PC to see this if needed)
+    console.log("Haptic triggered:", success);
+}
 function shareProfile() {
     const url = window.location.href;
     if (navigator.share) {
@@ -5583,7 +6121,7 @@ function enableSwipeToClose(modalId) {
         startY = e.touches[0].clientY;
         startTime = Date.now();
         isDragging = false;
-        
+
         // Kill any ongoing transitions instantly
         content.style.transition = 'none';
     };
@@ -5601,7 +6139,7 @@ function enableSwipeToClose(modalId) {
         }
 
         if (isDragging) {
-            if (e.cancelable) e.preventDefault(); 
+            if (e.cancelable) e.preventDefault();
             e.stopPropagation();
 
             // Direct 1:1 movement (feels most responsive)
@@ -5626,10 +6164,10 @@ function enableSwipeToClose(modalId) {
         // --- CLOSING LOGIC ---
         // Threshold: Dragged > 120px OR Fast Flick
         if (currentY > 120 || (velocity > 0.5 && currentY > 40)) {
-            
+
             // 1. ANIMATE CONTENT DROP (Physics)
             content.style.transition = 'transform 0.2s ease-out';
-            content.style.transform = 'translateY(100vh)'; 
+            content.style.transform = 'translateY(100vh)';
 
             // 2. ANIMATE BACKDROP FADE (The Fix)
             // We fade the parent modal container simultaneously
@@ -5638,17 +6176,17 @@ function enableSwipeToClose(modalId) {
 
             // 3. WAIT & RESET
             setTimeout(() => {
-                modal.classList.remove('active'); 
-                
+                modal.classList.remove('active');
+
                 // Reset ALL styles for next open
                 content.style.transform = '';
                 content.style.transition = '';
-                
+
                 modal.style.transition = ''; // Remove inline transition
                 modal.style.opacity = '';    // Remove inline opacity
-                
+
                 unlockScroll();
-                
+
             }, 200); // Matches the 0.2s duration
 
         } else {
@@ -5656,13 +6194,13 @@ function enableSwipeToClose(modalId) {
             content.style.transition = 'transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1)';
             content.style.transform = '';
         }
-        
+
         currentY = 0;
     };
 
     // Attach Listeners
     content.addEventListener('touchstart', onTouchStart, { passive: true });
-    content.addEventListener('touchmove', onTouchMove, { passive: false }); 
+    content.addEventListener('touchmove', onTouchMove, { passive: false });
     content.addEventListener('touchend', onTouchEnd, { passive: true });
 }
 
@@ -5675,7 +6213,7 @@ function initAllSwipeGestures() {
         'exploreFilterModal',
         'postDetailModal',
         'storyUploadModal',
-        'storyViewerModal', 
+        'storyViewerModal',
         'savedPostsModal',
         'connectionsModal',
         'viewProfileModal',
@@ -5926,21 +6464,17 @@ function forceDownload(e, url, fileName) {
 }
 
 // 5. Toggle Logic (Global)
+/* --- TAG ALERTS FIX --- */
+
 window.toggleMainTag = function (name, className, hex, hasSub) {
     if (!window.selectedTags) window.selectedTags = [];
-
     const index = window.selectedTags.findIndex(t => t.text === name);
 
     if (index > -1) {
-        // Remove tag
         window.selectedTags.splice(index, 1);
-        // If parent removed, remove its children
-        if (hasSub) {
-            window.selectedTags = window.selectedTags.filter(t => !COUNCIL_SUBS.includes(t.text));
-        }
+        if (hasSub) window.selectedTags = window.selectedTags.filter(t => !COUNCIL_SUBS.includes(t.text));
     } else {
-        // Add tag
-        if (window.selectedTags.length >= 2) return alert("Maximum 2 tags allowed.");
+        if (window.selectedTags.length >= 2) return showToast("⚠️ Max 2 tags allowed"); // <--- FIX
         window.selectedTags.push({ text: name, colorClass: className, hex: hex });
     }
     window.renderTagMenu();
@@ -5948,27 +6482,16 @@ window.toggleMainTag = function (name, className, hex, hasSub) {
 
 window.toggleSubTag = function (subName) {
     const index = window.selectedTags.findIndex(t => t.text === subName);
-
     if (index > -1) {
-        // If clicking an existing sub-tag, remove it
         window.selectedTags.splice(index, 1);
     } else {
-        // If adding a sub-tag...
-        // 1. Check limit. We allow if "Council" is currently selected (because we will swap it)
         const councilIndex = window.selectedTags.findIndex(t => t.text === "Council / Committee");
         const currentCount = window.selectedTags.length;
 
-        // If at limit (2) and Council isn't one of them, stop.
         if (currentCount >= 2 && councilIndex === -1) {
-            return alert("Maximum 2 tags allowed.");
+            return showToast("⚠️ Max 2 tags allowed"); // <--- FIX
         }
-
-        // 2. Remove the generic "Council" tag if it exists (Swap Parent for Child)
-        if (councilIndex > -1) {
-            window.selectedTags.splice(councilIndex, 1);
-        }
-
-        // 3. Add the specific sub-tag
+        if (councilIndex > -1) window.selectedTags.splice(councilIndex, 1);
         window.selectedTags.push({ text: subName, colorClass: 'tag-sub-council', hex: '#24A0ED' });
     }
     window.renderTagMenu();
@@ -6189,3 +6712,44 @@ function toggleGoatStatus(postId, commentId, authorRole) {
         showToast("Action failed.");
     });
 }
+/* =========================================
+   PWA NATIVE INSTALL LOGIC
+   ========================================= */
+let deferredPrompt;
+
+window.addEventListener('beforeinstallprompt', (e) => {
+    // 1. Prevent the mini-infobar from appearing on mobile
+    e.preventDefault();
+    
+    // 2. Stash the event so it can be triggered later
+    deferredPrompt = e;
+    
+    // 3. Show your custom "Install App" button
+    const installBtn = document.getElementById('pwaInstallBtn');
+    if (installBtn) {
+        installBtn.style.display = 'block';
+        
+        installBtn.addEventListener('click', async () => {
+            // Hide the button immediately
+            installBtn.style.display = 'none';
+            
+            // Show the native install prompt
+            deferredPrompt.prompt();
+            
+            // Wait for the user to respond to the prompt
+            const { outcome } = await deferredPrompt.userChoice;
+            console.log(`User response to the install prompt: ${outcome}`);
+            
+            // We've used the prompt, and can't use it again, discard it
+            deferredPrompt = null;
+        });
+    }
+});
+
+// Optional: Detect if already installed
+window.addEventListener('appinstalled', () => {
+    showToast(" V-SYNC Installed!");
+    // Hide the button if it's still visible
+    const installBtn = document.getElementById('pwaInstallBtn');
+    if (installBtn) installBtn.style.display = 'none';
+});
