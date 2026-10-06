@@ -119,15 +119,6 @@ app.post('/api/users', async (req, res) => {
     }
 });
 
-// Get all events
-app.get('/api/events', async (req, res) => {
-    try {
-        const [rows] = await pool.query('SELECT * FROM events ORDER BY date ASC');
-        res.json(rows);
-    } catch (err) {
-        handleQueryError(res, err);
-    }
-});
 
 // --- AUTHENTICATION ---
 app.post('/api/login', async (req, res) => {
