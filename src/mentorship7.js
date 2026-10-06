@@ -1022,74 +1022,57 @@ function addExperienceField() {
 // --- AUTH: REGISTER HANDLER ---
 // --- AUTH: REGISTER HANDLER (FIXED) ---
 // --- AUTH: REGISTER HANDLER (FIXED) ---
-function handleLogin(e) {
-    e.preventDefault();
-    const btn = e.target.querySelector('button[type="submit"]');
-    const originalText = btn.innerText;
+async function handleLogin(event) {
+    event.preventDefault();
+    
+    // Automatically grabs values based on input types, bypassing ID mismatches
+    const emailField = document.querySelector('input[type="email"]');
+    const passwordField = document.querySelector('input[type="password"]');
 
-    const email = document.getElementById('loginEmail').value.trim().toLowerCase();
-    const password = document.getElementById('loginPassword').value.trim();
-    // CAPTURE CHECKBOX STATE
-    const isAnon = document.getElementById('loginAnon').checked;
+    const email = emailField ? emailField.value : '';
+    const password = passwordField ? passwordField.value : '';
 
-    if (!email || !password) return showToast("Please enter credentials.");
+    console.log("Attempting login with:", email);
 
-    btn.innerText = "Verifying...";
-    btn.disabled = true;
+    try {
+        const response = await fetch('http://localhost:3000/api/login', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ email, password })
+        });
 
-    fetch('http://localhost:3000/api/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password })
-    })
-    .then(res => res.json())
-    .then(data => {
-        if (data.success) {
-            const userObj = data.user;
-            // Map SQL id to uid for legacy compatibility
-            userObj.uid = userObj.id; 
-            userObj.name = userObj.username;
+        const data = await response.json();
+
+        if (response.ok && data.success) {
+            console.log("Login Success:", data);
+            alert("Login Successful! Welcome, " + data.user.first_name);
             
-            // Write to localStorage
-            localStorage.setItem('currentUser', JSON.stringify(userObj));
-            localStorage.setItem('vsync_uid', userObj.id);
-            
-            // Set global state
-            window.currentUser = userObj;
-            currentUser = window.currentUser;
-            
-            window.currentUserData = { ...userObj, isAnonymousSession: isAnon };
-            if (isAnon) {
-                window.currentUserData.displayNameOverride = "Anonymous";
-                window.currentUserData.roleOverride = "Guest";
-                window.currentUserData.profilePicOverride = "";
-                window.currentUserData.realYear = userObj.year;
-            }
-            currentUserData = window.currentUserData;
+            // Map SQL user_id to id and uid for legacy compatibility
+            data.user.id = data.user.user_id;
+            data.user.uid = data.user.user_id;
 
-            // Dismiss modal & Show App
+            // Critical initializations to fix the UI errors
             document.getElementById('authScreen').classList.add('hidden');
             document.getElementById('appScreen').classList.remove('hidden');
             
-            // Execute Initialization functions
+            // Bind global data for the rest of the application
+            window.currentUser = data.user;
+            currentUser = window.currentUser;
+            window.currentUserData = data.user;
+            currentUserData = window.currentUserData;
+
             if (typeof updateUserInfo === 'function') updateUserInfo();
             if (typeof switchTab === 'function') switchTab('community');
-            if (!isAnon && typeof loadActivePoll === 'function') loadActivePoll();
-            if (!isAnon && typeof initMessageBadgeListener === 'function') initMessageBadgeListener();
-
-            btn.innerText = "Success";
         } else {
-            showToast(data.error || "Login failed.");
-            btn.innerText = originalText;
-            btn.disabled = false;
+            console.error("Login Failed:", data.message);
+            alert("Login failed: " + data.message);
         }
-    })
-    .catch(err => {
-        console.error("Login Error:", err);
-        showToast("Network Error.");
-        btn.innerText = originalText;
-        btn.disabled = false;
-    });
+    } catch (error) {
+        console.error("Network Error:", error);
+        alert("Failed to connect to the Node.js server on port 3000.");
+    }
 }
 
 function handleRegister(e) {

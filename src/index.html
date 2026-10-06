@@ -22,10 +22,13 @@
     </script>
     <!-- OneSignal initialization removed for localhost -->
 <script>
+    // Purge cached Service Workers (removes OneSignal from browser cache)
     if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.register('/sw.js')
-            .then(() => console.log("Service Worker Registered"))
-            .catch(err => console.log("SW Failed:", err));
+        navigator.serviceWorker.getRegistrations().then(function(registrations) {
+            for(let registration of registrations) {
+                registration.unregister();
+            }
+        });
     }
 </script>
 </head>
@@ -938,10 +941,7 @@
 
 
     <div id="customToast">Action Restricted</div>
-    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-storage.js"></script>
+
     <script src="mentorship7.js"></script>
 
     <style>

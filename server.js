@@ -3,10 +3,19 @@ const mysql = require('mysql2/promise');
 const cors = require('cors');
 
 const app = express();
-const port = process.env.PORT || 3000;
+const port = 3000;
 
 // Middleware
 app.use(cors());
+app.use((req, res, next) => {
+    res.header('Access-Control-Allow-Origin', '*');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+    if (req.method === 'OPTIONS') {
+        return res.sendStatus(200);
+    }
+    next();
+});
 app.use(express.json());
 app.use(express.static('src')); // Serve frontend HTML and JS from src folder
 app.use(express.static('public')); // Serve assets like favicon.ico from public folder
@@ -15,13 +24,22 @@ app.use(express.static('public')); // Serve assets like favicon.ico from public 
 const pool = mysql.createPool({
     host: 'localhost',
     user: 'root', // Update with your MySQL username
-    password: 'Sidd@1604', // Update with your MySQL password
+    password: 'Root123!', // Update with your MySQL password
     database: 'vsync_db',
     waitForConnections: true,
     connectionLimit: 10,
     queueLimit: 0
 });
 
+// Test database connection
+pool.getConnection()
+    .then((connection) => {
+        console.log('MySQL connected successfully');
+        connection.release();
+    })
+    .catch((err) => {
+        console.error('MySQL connection error:', err);
+    });
 // Helper for error handling
 const handleQueryError = (res, err) => {
     console.error(err);
@@ -123,22 +141,19 @@ app.post('/api/users', async (req, res) => {
 // --- AUTHENTICATION ---
 app.post('/api/login', async (req, res) => {
     const { email, password } = req.body;
-    if (!email || !password) {
-        return res.status(400).json({ success: false, error: 'Email and password are required' });
-    }
-
     try {
-        const [rows] = await pool.query('SELECT user_id AS id, first_name AS username, email, role FROM users WHERE email = ? AND password = ?', [email, password]);
+        const [rows] = await pool.query(
+            'SELECT user_id, email, first_name, role FROM users WHERE email = ? AND password = ?', 
+            [email, password]
+        );
         if (rows.length > 0) {
-            const user = rows[0];
-            // Exclude password from the returned object
-            const { password: _, ...userData } = user;
-            res.json({ success: true, user: userData });
+            res.json({ success: true, user: rows[0] });
         } else {
-            res.status(401).json({ success: false, error: 'Invalid email or password' });
+            res.status(401).json({ success: false, message: 'Account not found' });
         }
     } catch (err) {
-        handleQueryError(res, err);
+        console.error('Login Error:', err);
+        res.status(500).json({ success: false, message: 'Internal server error' });
     }
 });
 

@@ -1,26 +1,28 @@
 
-const firebaseConfig = {
-    apiKey: "AIzaSyBFivNpSRGK87SDxzi3wWJAl3Pia_vrezo",
-    authDomain: "college-mentorship--app.firebaseapp.com",
-    projectId: "college-mentorship--app",
-    storageBucket: "college-mentorship--app.firebasestorage.app",
-    messagingSenderId: "842851012332",
-    appId: "1:842851012332:web:37ff1cbf9b7b90977c1fc9",
-    measurementId: "G-G6MN80S4LM"
+// --- JWT / LOCALSTORAGE AUTH ---
+let currentUser = JSON.parse(localStorage.getItem('currentUser') || 'null');
+window.currentUser = currentUser;
+
+// Dummy db object to prevent crashes on non-migrated functions during sequential execution
+const db = {
+    collection: () => ({
+        doc: () => ({
+            get: async () => ({ exists: false, data: () => ({}) }),
+            set: async () => {},
+            update: async () => {},
+            delete: async () => {},
+            onSnapshot: () => () => {},
+            collection: () => db.collection()
+        }),
+        where: () => db.collection(),
+        orderBy: () => db.collection(),
+        limit: () => db.collection(),
+        get: async () => ({ docs: [], empty: true }),
+        add: async () => ({ id: 'dummy' }),
+        onSnapshot: () => () => {}
+    })
 };
 
-let app, auth, db;
-
-try {
-    app = firebase.initializeApp(firebaseConfig);
-    auth = firebase.auth();
-    db = firebase.firestore();
-    console.log("Firebase initialized");
-} catch (error) { console.error(error); }
-// ... (existing init code)
-db = firebase.firestore();
-const storage = firebase.storage(); // <--- ADD THIS
-console.log("Firebase initialized");
 // --- DAILY POLL LOGIC ---
 
 // REPLACE THESE WITH REAL UIDs
@@ -551,7 +553,7 @@ async function sharePost(postId, postTitle) {
 }
 
 // --- GLOBAL STATE ---
-let currentUser = null; // FIXED: Removed "letlet" typo
+// currentUser already declared at the top
 let currentUserData = null;
 
 // --- CONSTANTS (Moved to Top) ---
@@ -1020,39 +1022,57 @@ function addExperienceField() {
 // --- AUTH: REGISTER HANDLER ---
 // --- AUTH: REGISTER HANDLER (FIXED) ---
 // --- AUTH: REGISTER HANDLER (FIXED) ---
-function handleLogin(e) {
-    e.preventDefault();
-    const btn = e.target.querySelector('button[type="submit"]');
-    const originalText = btn.innerText;
+async function handleLogin(event) {
+    event.preventDefault();
+    
+    // Automatically grabs values based on input types, bypassing ID mismatches
+    const emailField = document.querySelector('input[type="email"]');
+    const passwordField = document.querySelector('input[type="password"]');
 
-    const email = document.getElementById('loginEmail').value.trim().toLowerCase();
-    const password = document.getElementById('loginPassword').value.trim();
-    // CAPTURE CHECKBOX STATE
-    const isAnon = document.getElementById('loginAnon').checked;
+    const email = emailField ? emailField.value : '';
+    const password = passwordField ? passwordField.value : '';
 
-    if (!email || !password) return showToast("Please enter credentials.");
+    console.log("Attempting login with:", email);
 
-    btn.innerText = "Verifying...";
-    btn.disabled = true;
-
-    // Check DB
-    db.collection('users').where('email', '==', email).get()
-        .then(snap => {
-            if (!snap.empty) {
-                const userDoc = snap.docs[0];
-                // In a real app, verify password here. For demo, we trust it.
-                simulateLogin(userDoc.id, isAnon);
-            } else {
-                showToast("Account not found.");
-                btn.innerText = originalText;
-                btn.disabled = false;
-            }
-        })
-        .catch(err => {
-            console.error(err);
-            btn.innerText = originalText;
-            btn.disabled = false;
+    try {
+        const response = await fetch('http://localhost:3000/api/login', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ email, password })
         });
+
+        const data = await response.json();
+
+        if (response.ok && data.success) {
+            console.log("Login Success:", data);
+            alert("Login Successful! Welcome, " + data.user.first_name);
+            
+            // Map SQL user_id to id and uid for legacy compatibility
+            data.user.id = data.user.user_id;
+            data.user.uid = data.user.user_id;
+
+            // Critical initializations to fix the UI errors
+            document.getElementById('authScreen').classList.add('hidden');
+            document.getElementById('appScreen').classList.remove('hidden');
+            
+            // Bind global data for the rest of the application
+            window.currentUser = data.user;
+            currentUser = window.currentUser;
+            window.currentUserData = data.user;
+            currentUserData = window.currentUserData;
+
+            if (typeof updateUserInfo === 'function') updateUserInfo();
+            if (typeof switchTab === 'function') switchTab('community');
+        } else {
+            console.error("Login Failed:", data.message);
+            alert("Login failed: " + data.message);
+        }
+    } catch (error) {
+        console.error("Network Error:", error);
+        alert("Failed to connect to the Node.js server on port 3000.");
+    }
 }
 
 function handleRegister(e) {
@@ -1252,16 +1272,7 @@ async function deleteAccount() {
 function switchTab(arg1, arg2) {
     let tabName = typeof arg1 === 'string' ? arg1 : arg2;
 
-    // --- NEW LOGIC: Clear Badge when opening Requests ---
-    if (tabName === 'requests') {
-        // Save all current pending IDs as "viewed"
-        localStorage.setItem('viewedRequests', JSON.stringify(currentPendingRequestIds));
-        // Hide badge immediately
-        document.getElementById('requestBadge').classList.add('hidden');
-    }
-    if (document.getElementById('chats')) {
-        document.getElementById('chats').classList.remove('mobile-chat-open');
-    }
+
 
     // ... (Keep your existing tab switching logic below) ...
     document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
@@ -1271,13 +1282,8 @@ function switchTab(arg1, arg2) {
     const btn = document.querySelector(`.tab-button[onclick*="'${tabName}'"]`);
     if (btn) btn.classList.add('active');
 
-    if (tabName === 'mentors') loadMentors();
-    if (tabName === 'chats') loadChats();
     if (tabName === 'community') loadCommunity();
-    if (tabName === 'requests') loadRequests();
-    if (tabName === 'profile') loadProfile();
     if (tabName === 'leaderboard') loadLeaderboard();
-    if (tabName === 'events') loadEvents();
 }
 
 // --- CONTEXT MENU LOGIC (Dynamic) ---
@@ -1606,53 +1612,6 @@ function removePostImage() {
     removeBtn.style.display = 'none';
 }
 
-function handleChatFileSelect(input) {
-    if (input.files && input.files[0]) {
-        const file = input.files[0];
-        const chatId = document.getElementById('selectedChatId').value;
-
-        // 1. Detect Type
-        let type = 'image';
-        if (file.type.startsWith('video/')) type = 'video';
-        else if (file.type.includes('pdf') || file.type.includes('document') || file.name.match(/\.(doc|docx|ppt|pptx|txt)$/i)) type = 'document';
-
-        // 2. Limit Size (20MB)
-        if (file.size > 20 * 1024 * 1024) {
-            alert("File too large. Max 20MB allowed.");
-            input.value = "";
-            return;
-        }
-
-        if (typeof showToast === 'function') showToast("Uploading file...");
-
-        uploadFileToStorage(file).then(url => {
-            // 3. Send Message with Metadata
-            db.collection('chats').doc(chatId).collection('messages').add({
-                imageUrl: url, // Reuse this field for file URL
-                mediaType: type,
-                fileName: file.name, // Save name
-                fileSize: file.size, // Save size
-                text: type === 'document' ? "Sent a file" : (type === 'video' ? "Sent a video" : "Sent an image"),
-                senderId: currentUser.uid,
-                timestamp: new Date()
-            });
-
-            // Update Metadata
-            let lastMsgText = "📷 Image";
-            if (type === 'video') lastMsgText = "🎥 Video";
-            if (type === 'document') lastMsgText = "📄 File";
-
-            db.collection('chats').doc(chatId).update({
-                lastMessage: lastMsgText,
-                updatedAt: new Date(),
-                lastSenderId: currentUser.uid
-            });
-
-        }).catch(err => alert("Upload failed: " + err.message));
-
-        input.value = "";
-    }
-}
 
 
 function sendChatFile(base64String, type) {
@@ -1706,22 +1665,6 @@ const commonEmojis = [
     "👋", "🔥", "✨", "❤️", "💯", "🎉", "💀", "💩", "🤡", "👻"
 ];
 
-function toggleEmojiPicker() {
-    const picker = document.getElementById('emojiPicker');
-    picker.classList.toggle('hidden');
-
-    // Lazy load emojis only when opened first time
-    if (picker.innerHTML === "") {
-        commonEmojis.forEach(emoji => {
-            const btn = document.createElement('button');
-            btn.className = "emoji-btn";
-            btn.innerText = emoji;
-            btn.type = "button"; // Prevent form submission
-            btn.onclick = () => insertEmoji(emoji);
-            picker.appendChild(btn);
-        });
-    }
-}
 // --- ADMIN PANEL LOGIC ---
 
 async function openAdminPanel() {
@@ -2137,18 +2080,6 @@ function openUserProfile(targetUserId) {
     }).catch(e => console.error(e));
 }
 
-function shareViewedProfile() {
-    const name = document.getElementById('viewProfileName').innerText;
-    if (navigator.share) {
-        navigator.share({
-            title: `Check out ${name} on V-SYNC`,
-            text: `Connect with ${name}, a student on V-SYNC!`,
-            url: window.location.href
-        });
-    } else {
-        alert("Sharing not supported on this device.");
-    }
-}
 
 
 // --- CONNECTIONS MODAL ---
@@ -2157,90 +2088,6 @@ function openConnectionsModal() {
     loadConnections();
 }
 
-function loadConnections() {
-    const listEl = document.getElementById('connectionsModalList');
-    listEl.innerHTML = '<p style="text-align:center; color:var(--text-secondary); margin-top:20px;">Loading...</p>';
-
-    const sentPromise = db.collection('connection_requests').where('senderId', '==', currentUser.uid).where('status', '==', 'accepted').get();
-    const receivedPromise = db.collection('connection_requests').where('recipientId', '==', currentUser.uid).where('status', '==', 'accepted').get();
-
-    Promise.all([sentPromise, receivedPromise]).then(async ([sentSnap, receivedSnap]) => {
-        const allDocs = [...sentSnap.docs, ...receivedSnap.docs];
-
-        if (allDocs.length === 0) {
-            listEl.innerHTML = '<p style="text-align:center; color:var(--text-secondary); margin-top:20px;">No connections yet.</p>';
-            return;
-        }
-
-        const renderPromises = allDocs.map(async (doc) => {
-            const data = doc.data();
-            let otherId;
-
-            if (data.senderId === currentUser.uid) {
-                otherId = data.recipientId;
-            } else {
-                otherId = data.senderId;
-            }
-
-            // Fetch profile data
-            let otherUser = null;
-            try {
-                const userSnap = await db.collection('users').doc(otherId).get();
-                if (userSnap.exists) {
-                    otherUser = userSnap.data();
-                } else {
-                    return ''; // User deleted, skip rendering
-                }
-            } catch (e) {
-                console.error("Error fetching user:", e);
-                return ''; // Skip on error
-            }
-
-            const rawName = otherUser.name || "Unknown User";
-            const displayName = rawName.charAt(0).toUpperCase() + rawName.slice(1);
-            const safeNameEncoded = encodeURIComponent(displayName);
-
-            const role = (otherUser.role || "Student").charAt(0).toUpperCase() + (otherUser.role || "Student").slice(1);
-            const yearBadge = getYearBadgeHtml(otherUser.year); // Helper function must exist
-
-            let avatarHtml;
-            if (otherUser.profilePic) {
-                avatarHtml = `<img src="${otherUser.profilePic}" style="width:40px; height:40px; border-radius:50%; object-fit:cover; border:1px solid var(--border-color); cursor:pointer;" onclick="openUserProfile('${otherId}')">`;
-            } else {
-                const initial = displayName.charAt(0);
-                avatarHtml = `<div style="width:40px; height:40px; border-radius:50%; background:#333; display:flex; align-items:center; justify-content:center; color:#ccc; font-weight:bold; font-size:16px; border:1px solid var(--border-color); cursor:pointer;" onclick="openUserProfile('${otherId}')">${initial}</div>`;
-            }
-
-            return `
-            <div class="card" style="margin-bottom: 10px; padding: 15px;">
-                <div style="display:flex; align-items:center; gap:12px; margin-bottom:12px;">
-                    ${avatarHtml}
-                    <div>
-                        <div style="color:var(--text-main); font-weight:700; font-size:15px; line-height:1.2; cursor:pointer;" onclick="openUserProfile('${otherId}')">
-                            ${displayName}
-                        </div>
-                        <div style="display:flex; align-items:center; gap:5px; margin-top:2px;">
-                            <span class="badge badge-verified" style="font-size:9px; padding:1px 6px;">${role}</span>
-                            ${yearBadge}
-                        </div>
-                    </div>
-                </div>
-
-                <div style="display:flex; gap:10px;">
-                    <button class="btn btn-primary" style="flex:1; padding:8px; font-size:13px;" onclick="goToChatFromModal('${otherId}', '${safeNameEncoded}')">Message</button>
-                    <button class="btn btn-danger" style="padding:8px; font-size:13px;" onclick="unfriend('${otherId}', '${doc.id}')">Unfriend</button>
-                </div>
-            </div>`;
-        });
-
-        const renderedItems = await Promise.all(renderPromises);
-        listEl.innerHTML = renderedItems.join('');
-
-    }).catch(e => {
-        console.error("Error loading connections:", e);
-        listEl.innerHTML = '<p style="color:var(--danger-color); text-align:center;">Failed to load.</p>';
-    });
-}
 
 function goToChatFromModal(userId, encodedName) {
     // Close the connections popup
@@ -2278,80 +2125,7 @@ function goToChat(userId, userName) {
 }
 
 // --- EXPLORE & SEARCH ---
-function loadMentors() {
-    const listEl = document.getElementById('searchResultsList');
-    listEl.innerHTML = '<p style="text-align: center; grid-column: 1 / -1; color: var(--text-secondary);">Loading connections...</p>';
 
-    const usersPromise = db.collection('users').get();
-    const requestsPromise = db.collection('connection_requests').where('recipientId', '==', currentUser.uid).get();
-    const sentRequestsPromise = db.collection('connection_requests').where('senderId', '==', currentUser.uid).get();
-
-    Promise.all([usersPromise, requestsPromise, sentRequestsPromise]).then(([userSnap, receivedReqSnap, sentReqSnap]) => {
-        const allRequests = [...receivedReqSnap.docs, ...sentReqSnap.docs];
-
-        // --- 1. FILTER LOGIC START ---
-        // Convert snapshot to array of docs
-        let filteredDocs = userSnap.docs;
-
-        // A. Filter by Role
-        if (window.exploreFilters.roles.length > 0) {
-            filteredDocs = filteredDocs.filter(doc => {
-                const r = (doc.data().role || 'student').toLowerCase();
-                return window.exploreFilters.roles.includes(r);
-            });
-        }
-
-        // B. Filter by Year
-        if (window.exploreFilters.years.length > 0) {
-            filteredDocs = filteredDocs.filter(doc => {
-                const y = doc.data().year;
-                return window.exploreFilters.years.includes(y);
-            });
-        }
-
-        // C. Filter by College
-        if (window.exploreFilters.colleges.length > 0) {
-            filteredDocs = filteredDocs.filter(doc => {
-                const c = doc.data().college;
-                return window.exploreFilters.colleges.includes(c);
-            });
-        }
-        // --- FILTER LOGIC END ---
-
-        renderUserResults(filteredDocs, allRequests); // Pass ARRAY, not snapshot
-    }).catch(e => {
-        listEl.innerHTML = '<p style="color:var(--danger-color); text-align:center;">Failed to load.</p>';
-        console.error("Error in loadMentors:", e);
-    });
-}
-
-function handleUserSearch(event) {
-    // 1. Prevent page refresh if "Enter" is pressed
-    if (event) event.preventDefault();
-
-    // 2. Get the search term and make it lowercase (Case Insensitive)
-    const searchInput = document.getElementById('searchInput');
-    const term = searchInput.value.toLowerCase().trim();
-
-    // 3. Get the list of cards currently on screen
-    const listEl = document.getElementById('searchResultsList');
-    const cards = listEl.getElementsByClassName('card');
-
-    // 4. Loop through every card and toggle visibility (Real-Time)
-    for (let i = 0; i < cards.length; i++) {
-        const card = cards[i];
-
-        // Get all text inside the card (Name, College, Role)
-        const text = card.textContent || card.innerText;
-
-        // Check if the text matches the search term
-        if (text.toLowerCase().indexOf(term) > -1) {
-            card.style.display = ""; // Show
-        } else {
-            card.style.display = "none"; // Hide
-        }
-    }
-}
 
 function unfriend(otherId, reqId) {
     showConfirm(
@@ -2544,82 +2318,6 @@ function sendInstantConnectionRequest(recipientId, btnElement) {
 
 // --- REQUESTS TAB ---
 // --- REQUESTS TAB LOGIC ---
-function loadRequests() {
-    const list = document.getElementById('requestsList');
-    if (!list) return;
-
-    list.innerHTML = '<p style="text-align:center; color:var(--text-secondary);">Loading requests...</p>';
-
-    db.collection('connection_requests')
-        .where('recipientId', '==', currentUser.uid)
-        .get()
-        .then(async (snap) => {
-            const pendingDocs = snap.docs.filter(d => d.data().status === 'pending');
-
-            if (pendingDocs.length === 0) {
-                list.innerHTML = '<p style="text-align:center; color:var(--text-secondary);">No pending requests.</p>';
-                return;
-            }
-
-            const renderPromises = pendingDocs.map(async (doc) => {
-                const req = doc.data();
-
-                // Fetch Sender Profile
-                let senderUser = {};
-                try {
-                    const userSnap = await db.collection('users').doc(req.senderId).get();
-                    if (userSnap.exists) senderUser = userSnap.data();
-                } catch (e) { }
-
-                const senderName = (senderUser.name || req.senderName || "Unknown").charAt(0).toUpperCase() + (senderUser.name || req.senderName || "User").slice(1);
-                const dateStr = req.createdAt ? req.createdAt.toDate().toLocaleDateString() : 'Recently';
-
-                // Badges
-                const role = (senderUser.role || "Student").charAt(0).toUpperCase() + (senderUser.role || "Student").slice(1);
-                const yearBadge = getYearBadgeHtml(senderUser.year);
-
-                // Avatar
-                let avatarHtml;
-                if (senderUser.profilePic) {
-                    // FIXED: Removed extra semicolons and fixed quote placement
-                    avatarHtml = `<img src="${senderUser.profilePic}" loading="lazy" style="width:120px; height:120px; border-radius:50%; object-fit:cover; border:1px solid var(--border-color);">`;
-                } else {
-                    const initial = senderName.charAt(0);
-                    avatarHtml = `<div style="width:100px; height:100px; border-radius:50%; background:#333; display:flex; align-items:center; justify-content:center; color:#ccc; font-weight:bold; font-size:18px; border:1px solid var(--border-color);">${initial}</div>`;
-                }
-
-                return `
-                        <div class="card">
-                            <div class="card-header" style="justify-content:flex-start; gap:12px; border-bottom:none; padding-bottom:0;">
-                                ${avatarHtml}
-                                <div>
-                                    <div style="font-size:16px; font-weight:700;">${senderName}</div>
-                                    <div style="display:flex; align-items:center; gap:5px; margin-top:3px;">
-                                        
-                                        <span class="badge" style="font-size:9px; background:rgba(255,255,255,0.1); color:#ccc;">${role}</span>
-                                        ${yearBadge}
-                                    </div>
-                                </div>
-                            </div>
-                            
-                            <div class="card-body" style="padding-top:10px; padding-left: 60px;"> <p style="font-style:italic; margin-bottom:5px;">"${req.message}"</p>
-                                <small style="color:var(--text-secondary); font-size:11px;">Received: ${dateStr}</small>
-                            </div>
-                            
-                            <div class="card-footer" style="gap: 10px; padding-left: 60px;"> <button class="btn btn-secondary" onclick="updateRequest('${doc.id}', 'accepted', '${req.senderId}')">Accept</button>
-                                <button class="btn btn-danger" onclick="updateRequest('${doc.id}', 'rejected')">Decline</button>
-                            </div>
-                        </div>`;
-            });
-
-            const html = await Promise.all(renderPromises);
-            list.innerHTML = html.join('');
-        })
-        .catch(e => {
-            console.error("Error loading requests:", e);
-            list.innerHTML = '<p style="text-align:center; color:var(--danger-color);">Error loading requests.</p>';
-        });
-}
 function lockScroll() {
     document.body.classList.add('no-scroll');
 }
@@ -2682,136 +2380,6 @@ function createChat(otherId) {
 // --- LOAD CHATS (Connections + Active Conversations) ---
 // --- LOAD CHATS (Clean UI - Search Connections + Active Conversations) ---
 // --- 3. LOAD CHATS (With Green Dot & Search) ---
-function loadChats() {
-    const listEl = document.getElementById('chatsListContent');
-    const searchTerm = document.getElementById('chatSearchInput').value.toLowerCase().trim();
-
-    if (!searchTerm) listEl.innerHTML = '<p style="color:var(--text-secondary); padding:15px;">Loading...</p>';
-
-    const sentPromise = db.collection('connection_requests').where('senderId', '==', currentUser.uid).where('status', '==', 'accepted').get();
-    const receivedPromise = db.collection('connection_requests').where('recipientId', '==', currentUser.uid).where('status', '==', 'accepted').get();
-    const chatsPromise = db.collection('chats').where('participants', 'array-contains', currentUser.uid).get();
-
-    Promise.all([sentPromise, receivedPromise, chatsPromise]).then(async ([sentSnap, recSnap, chatsSnap]) => {
-        const chatMap = {};
-
-        // 1. Process Chats & Extract Time for Sorting
-        chatsSnap.forEach(doc => {
-            const data = doc.data();
-            const otherId = data.participants.find(id => id !== currentUser.uid);
-
-            // Get Sort Time (Handle Firestore Timestamp or Date)
-            let sortTime = 0;
-            if (data.updatedAt && data.updatedAt.toDate) {
-                sortTime = data.updatedAt.toDate().getTime();
-            } else if (data.updatedAt) {
-                sortTime = new Date(data.updatedAt).getTime();
-            }
-
-            chatMap[otherId] = {
-                ...data,
-                id: doc.id,
-                _sortTime: sortTime // Store for sorting
-            };
-        });
-
-        // 2. Collect All Connections
-        const connectedUserIds = new Set();
-        sentSnap.forEach(doc => connectedUserIds.add(doc.data().recipientId));
-        recSnap.forEach(doc => connectedUserIds.add(doc.data().senderId));
-
-        // 3. Create a Sortable Array
-        let conversationList = Array.from(connectedUserIds).map(otherId => {
-            const chat = chatMap[otherId];
-            return {
-                otherId: otherId,
-                // If chat exists, use its time. If new connection (no chat), use 0 (bottom).
-                time: chat ? chat._sortTime : 0
-            };
-        });
-
-        // 4. SORT: Descending Order (Newest First) [Instagram Style Bubble Up]
-        conversationList.sort((a, b) => b.time - a.time);
-
-        // 5. Render in Sorted Order
-        const renderPromises = conversationList.map(async (item) => {
-            const otherId = item.otherId;
-
-            let otherUser = null;
-            try {
-                const uDoc = await db.collection('users').doc(otherId).get();
-                if (uDoc.exists) otherUser = uDoc.data();
-            } catch (e) { }
-
-            if (!otherUser) return '';
-
-            const name = (otherUser.name || 'User').toLowerCase();
-            if (searchTerm && !name.includes(searchTerm)) return '';
-
-            const displayName = otherUser.name.charAt(0).toUpperCase() + otherUser.name.slice(1);
-            const role = (otherUser.role || '').toUpperCase();
-
-            // Status Dot
-            let statusColor = '#636366';
-            if (otherUser.lastSeen) {
-                const diffMins = (new Date() - otherUser.lastSeen.toDate()) / 60000;
-                if (diffMins < 5) statusColor = '#30D158';
-            }
-
-            let avatarContent = otherUser.profilePic
-                ? `<img src="${otherUser.profilePic}" loading="lazy" style="width:45px; height:45px; border-radius:50%; object-fit:cover; border:1px solid var(--border-color);">`
-                : `<div style="width:45px; height:45px; border-radius:50%; background:black; color:white; display:flex; align-items:center; justify-content:center; border:1px solid var(--border-color); font-weight:bold; font-size:18px;">${displayName.charAt(0)}</div>`;
-
-            const avatarHtml = `
-            <div style="position: relative; flex-shrink: 0;">
-                ${avatarContent}
-                <div style="position: absolute; bottom: 2px; right: 2px; width: 12px; height: 12px; background: ${statusColor}; border: 2px solid var(--bg-card); border-radius: 50%;"></div>
-            </div>`;
-
-            const existingChat = chatMap[otherId];
-            const hasMessage = existingChat && existingChat.lastMessage && existingChat.lastMessage.trim() !== "";
-            const lastMsg = hasMessage ? existingChat.lastMessage : 'Start a conversation';
-            const msgColor = hasMessage ? 'var(--text-secondary)' : 'var(--primary-color)';
-            const chatId = existingChat ? existingChat.id : [currentUser.uid, otherId].sort().join('_');
-
-            // Unread Check
-            const myReadTime = (existingChat && existingChat.lastRead && existingChat.lastRead[currentUser.uid])
-                ? existingChat.lastRead[currentUser.uid].toDate()
-                : new Date(0);
-            const lastUpdate = existingChat && existingChat.updatedAt ? existingChat.updatedAt.toDate() : new Date(0);
-            const isUnread = hasMessage && (lastUpdate > myReadTime) && (existingChat.lastSenderId !== currentUser.uid);
-
-            return `
-            <div class="card chat-item animate-item" onclick="openInlineChat('${chatId}', '${otherId}', '${displayName}')" 
-                 style="cursor:pointer; padding: 15px; margin-bottom: 5px; display: flex; align-items: center; gap: 12px; user-select: none; border-left: ${isUnread ? '3px solid var(--primary-color)' : 'none'};"
-                 oncontextmenu="showContextMenu(event, 'chat', '${chatId}')"
-                 ontouchstart="startLongPress(event, 'chat', '${chatId}')"
-                 ontouchend="cancelLongPress()"
-                 ontouchmove="cancelLongPress()">
-
-                ${avatarHtml}
-                <div style="flex: 1; min-width: 0;">
-                    <div style="display:flex; justify-content:space-between;">
-                        <div style="font-weight: 600; font-size: 15px; color: var(--text-main); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
-                            ${displayName} <span style="font-size: 11px; color: var(--text-secondary);">(${role})</span>
-                        </div>
-                        ${isUnread ? '<span style="width:8px; height:8px; background:var(--primary-color); border-radius:50%;"></span>' : ''}
-                    </div>
-                    <small style="color: ${msgColor}; display: block; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
-                        ${lastMsg}
-                    </small>
-                </div>
-            </div>`;
-        });
-
-        const renderedItems = await Promise.all(renderPromises);
-        listEl.innerHTML = renderedItems.join('') || '<p style="color:var(--text-secondary); padding:15px;">No connections found.</p>';
-
-    }).catch(e => {
-        console.error(e);
-        listEl.innerHTML = '<p style="color:var(--danger-color)">Error loading chats.</p>';
-    });
-}
 /* --- FILE HELPERS --- */
 function getFileIcon(fileName) {
     const ext = fileName.split('.').pop().toLowerCase();
@@ -2903,60 +2471,9 @@ async function adminWipeDB() {
     }
 }
 
-function deleteChat(chatId, event) {
-    event.stopPropagation();
-    if (confirm("Are you sure you want to delete this conversation?")) {
-        db.collection('chats').doc(chatId).delete().then(() => {
-            loadChats();
-            if (document.getElementById('selectedChatId').value === chatId) {
-                document.getElementById('chatHeader').textContent = "Select a chat to begin.";
-                document.getElementById('messagesContainer').innerHTML = "";
-                document.getElementById('sendMessageForm').classList.add('hidden');
-            }
-        });
-    }
-}
 
 
 
-function handleSendMessage(e) {
-    // 1. CRITICAL: Stop the page from reloading immediately
-    if (e) e.preventDefault();
-
-    // 2. Get Data
-    const input = document.getElementById('messageText');
-    const text = input.value.trim();
-    const chatId = document.getElementById('selectedChatId').value;
-
-    // 3. Validation Checks
-    if (!text) return; // Don't send empty messages
-    if (!chatId) {
-        console.error("No chat ID selected");
-        return;
-    }
-    if (!currentUser) {
-        console.error("User not logged in");
-        return;
-    }
-
-    // 4. Send Message to Firestore
-    db.collection('chats').doc(chatId).collection('messages').add({
-        text: text,
-        senderId: currentUser.uid,
-        timestamp: new Date()
-    }).catch(err => console.error("Error sending msg:", err));
-
-    // 5. Update Chat Metadata (Last Message & Sender)
-    db.collection('chats').doc(chatId).update({
-        lastMessage: text,
-        updatedAt: new Date(),
-        lastSenderId: currentUser.uid
-    }).catch(err => console.error("Error updating chat:", err));
-
-    // 6. Clear Input
-    input.value = '';
-    input.focus(); // Keep keyboard open
-}
 
 
 /* --- GLOBAL LOADING STATE --- */
@@ -3009,8 +2526,31 @@ async function loadCommunity(forceRefresh = false) {
     }
 
     try {
-        const snap = await db.collection('posts').orderBy('createdAt', 'desc').limit(15).get();
-        let posts = snap.docs.map(doc => ({ ...doc.data(), id: doc.id }));
+        const res = await fetch('http://localhost:3000/api/posts');
+        const sqlPosts = await res.json();
+        
+        if (!Array.isArray(sqlPosts)) {
+            console.error("Failed to load posts from API:", sqlPosts);
+            listEl.innerHTML = '<p style="text-align:center;color:var(--danger-color);">Error loading community posts.</p>';
+            return;
+        }
+
+        let posts = sqlPosts.map(post => ({
+            id: post.id,
+            title: post.title,
+            body: post.content,
+            createdAt: new Date(post.created_at),
+            authorName: post.username,
+            authorId: "1", // Simplified
+            authorRole: "Student",
+            authorYear: "3",
+            authorPic: "",
+            isAnonymous: false,
+            upvotes: post.upvotes,
+            upvoters: new Array(post.upvotes).fill('dummy'),
+            reports: [],
+            tags: []
+        }));
 
         // --- FILTERS ---
         if (window.activeFilters && window.activeFilters.years.length > 0) {
@@ -3355,60 +2895,6 @@ function previewEditEventNewImages(input) {
 }
 
 // 5. SAVE CHANGES TO FIRESTORE
-async function saveEventChanges() {
-    const btn = document.getElementById('btnSaveEventChanges');
-    btn.innerText = "Saving...";
-    btn.disabled = true;
-
-    try {
-        const eventId = editEventState.id;
-        if(!eventId) throw new Error("No Event ID found");
-
-        // A. Upload NEW images (if any)
-        const newFilesInput = document.getElementById('editEventNewFiles');
-        let newUrls = [];
-        
-        if (newFilesInput && newFilesInput.files.length > 0) {
-            for (let i = 0; i < newFilesInput.files.length; i++) {
-                const file = newFilesInput.files[i];
-                // Unique path: events/ID_timestamp_index
-                const path = `events/${eventId}_${Date.now()}_${i}`;
-                const storageRef = firebase.storage().ref(path); // Ensure 'firebase' or 'storage' var is correct
-                await storageRef.put(file);
-                const url = await storageRef.getDownloadURL();
-                newUrls.push(url);
-            }
-        }
-
-        // B. Combine Old + New Images
-        const finalImages = [...editEventState.currentImages, ...newUrls];
-
-        // C. Update Firestore Document
-        await db.collection('events').doc(eventId).update({
-            Title: document.getElementById('editEventTitle').value,
-            Description: document.getElementById('editEventDesc').value,
-            Date: document.getElementById('editEventDate').value,
-            Time: document.getElementById('editEventTime').value,
-            Location: document.getElementById('editEventLoc').value,
-            RegLink: document.getElementById('editEventLink').value,
-            Images: finalImages
-        });
-
-        // D. Success & Refresh
-        showToast("Event updated successfully!");
-        closeModal('editEventModal');
-        
-        // Reload events to show changes
-        if(typeof loadEvents === 'function') loadEvents();
-
-    } catch (e) {
-        console.error("Save Error:", e);
-        alert("Failed to update event: " + e.message);
-    } finally {
-        btn.innerText = "Save Changes";
-        btn.disabled = false;
-    }
-}
 
 /* --- HANDLE UPVOTE (Fixed: Preserves Layout) --- */
 function handleUpvote(event, postId) {
@@ -3705,22 +3191,7 @@ window.exploreFilters = {
     colleges: []
 };
 
-function openExploreSortModal() {
-    lockScroll();
-    const modal = document.getElementById('exploreFilterModal');
-    modal.classList.add('active');
-    updateExploreFilterUI();
-}
 
-function toggleExploreFilter(category, value) {
-    const list = window.exploreFilters[category];
-    const index = list.indexOf(value);
-
-    if (index > -1) list.splice(index, 1); // Remove
-    else list.push(value); // Add
-
-    updateExploreFilterUI();
-}
 
 function updateExploreFilterUI() {
     // 1. Roles
@@ -3742,16 +3213,7 @@ function updateExploreFilterUI() {
     });
 }
 
-function clearExploreFilters() {
-    window.exploreFilters = { roles: [], years: [], colleges: [] };
-    updateExploreFilterUI();
-    loadMentors(); // Reload list
-}
 
-function applyExploreFilters() {
-    closeModal('exploreFilterModal');
-    loadMentors(); // Trigger reload with new filters
-}
 
 function toggleFilter(type, value) {
     const list = type === 'year' ? window.activeFilters.years : window.activeFilters.tags;
@@ -3863,25 +3325,17 @@ window.handleCreatePostSubmit = async function (e) {
         const isAnon = window.currentUserData.isAnonymousSession;
         const currentYear = isAnon ? window.currentUserData.realYear : window.currentUserData.year;
 
-        await db.collection('posts').add({
-            title: title,
-            body: body,
-            tags: finalTags,
-            imageUrl: fileUrl,
-            mediaType: mediaType,
-            authorId: window.currentUser.uid,
-            authorName: isAnon ? "Anonymous" : (window.currentUserData.name || "Anonymous"),
-            authorRole: isAnon ? "Guest" : (window.currentUserData.role || "Student"),
-            authorPic: isAnon ? "" : (window.currentUserData.profilePic || ""),
-            isAnonymous: isAnon,
-            authorYear: currentYear || "",
-            upvotes: 0,
-            upvoters: [],
-            createdAt: new Date(),
-            linkUrl: "",
-            reportCount: 0, // Starts clean
-            reports: []
+        const res = await fetch('http://localhost:3000/api/posts', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                user_id: 1, // Simulated current user for migration
+                title: title,
+                content: body
+            })
         });
+        
+        if (!res.ok) throw new Error("Failed to create post");
 
         console.log("Post saved successfully!");
 
@@ -4198,96 +3652,6 @@ let currentStoryIndex = 0;
 let storyTimer = null;
 
 // 1. LOAD STORIES
-function loadStories() {
-    const container = document.getElementById('storiesBar');
-    if (!container || !currentUser) return;
-
-    // Reset Container: Keep only the "Add Story" button
-    const addBtn = container.querySelector('.story-item[onclick="openStoryUploadModal()"]');
-    container.innerHTML = '';
-    if (addBtn) container.appendChild(addBtn);
-    else {
-        // Re-create Add Button if lost
-        const div = document.createElement('div');
-        div.className = 'story-item';
-        div.onclick = openStoryUploadModal;
-        div.innerHTML = `
-        <div class="story-ring-wrapper">
-            <div class="story-ring add-story"></div>
-            <div id="myStoryAvatar" class="story-avatar-placeholder">+</div>
-        </div>
-        <span class="story-name">Add Story</span>`;
-        container.appendChild(div);
-    }
-
-    // Update My Avatar on the Add Button
-    const myPic = window.currentUserData.profilePic;
-    const myPlaceholder = document.getElementById('myStoryAvatar');
-    if (myPic && myPlaceholder) {
-        myPlaceholder.innerHTML = `<img src="${myPic}" style="width:100%; height:100%; border-radius:50%; object-fit:cover;">`;
-        myPlaceholder.innerHTML += `<div style="position:absolute; bottom:0; right:0; background:var(--primary-color); color:white; width:20px; height:20px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:14px; border:2px solid var(--bg-card);">+</div>`;
-    }
-
-    const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000);
-
-    db.collection('stories')
-        .where('createdAt', '>', yesterday)
-        .orderBy('createdAt', 'asc')
-        .get()
-        .then(async (snap) => {
-            const storiesByUser = {};
-
-            snap.forEach(doc => {
-                const s = doc.data();
-                // Privacy Filter: Skip if private and not mine
-                if (s.isPrivate && s.userId !== currentUser.uid) return;
-
-                if (!storiesByUser[s.userId]) {
-                    storiesByUser[s.userId] = {
-                        user: { name: s.userName, pic: s.userPic, id: s.userId },
-                        items: [],
-                        hasUnseen: false
-                    };
-                }
-                storiesByUser[s.userId].items.push({ ...s, id: doc.id });
-
-                if (!s.viewers || !s.viewers.includes(currentUser.uid)) {
-                    storiesByUser[s.userId].hasUnseen = true;
-                }
-            });
-
-            const sortedGroups = Object.values(storiesByUser).sort((a, b) => {
-                // Your story first? Or Unseen first? Let's do Unseen first.
-                if (a.hasUnseen && !b.hasUnseen) return -1;
-                if (!a.hasUnseen && b.hasUnseen) return 1;
-                return 0;
-            });
-
-            sortedGroups.forEach(group => {
-                const ringClass = group.hasUnseen ? 'story-ring unseen' : 'story-ring';
-                const name = group.user.id === currentUser.uid ? 'Your Story' : group.user.name;
-
-                const div = document.createElement('div');
-                div.className = 'story-item';
-                // Add ID for easy removal later
-                div.id = `story-bubble-${group.user.id}`;
-                div.onclick = (e) => openStoryViewer(group, e.currentTarget);
-
-                const picHtml = group.user.pic
-                    ? `<img src="${group.user.pic}" class="story-avatar">`
-                    : `<div class="story-avatar" style="background:#333; display:flex; align-items:center; justify-content:center;">${name.charAt(0)}</div>`;
-
-                div.innerHTML = `
-                  <div class="story-ring-wrapper">
-                      <div class="${ringClass}"></div>
-                      ${picHtml}
-                  </div>
-                  <span class="story-name">${name}</span>
-              `;
-                container.appendChild(div);
-            });
-        });
-}
 
 // 2. UPLOAD LOGIC
 function openStoryUploadModal() {
@@ -4378,91 +3742,6 @@ let editorState = {
     videoElement: null
 };
 
-function handleStoryFileSelect(input) {
-    if (input.files && input.files[0]) {
-        storyFileToUpload = input.files[0];
-        const url = URL.createObjectURL(storyFileToUpload);
-
-        const img = document.getElementById('storyEditorImg');
-        const vid = document.getElementById('storyEditorVideo');
-        const placeholder = document.getElementById('storyPlaceholder');
-        const zoomCtrl = document.getElementById('zoomControls');
-
-        if (storyFileToUpload.type.startsWith('video/')) {
-            // Video Mode (Simple display, no crop for performance)
-            img.style.display = 'none';
-            zoomCtrl.style.display = 'none';
-            vid.src = url;
-            vid.style.display = 'block';
-            vid.play();
-        } else {
-            // Image Mode (Enable Editor)
-            vid.style.display = 'none';
-            vid.src = "";
-            img.src = url;
-            img.style.display = 'block';
-            zoomCtrl.style.display = 'flex';
-
-            // Initialize Position (Center)
-            img.onload = () => {
-                editorState.pointX = 0;
-                editorState.pointY = 0;
-                editorState.scale = 1;
-                updateEditorTransform();
-            };
-        }
-
-        placeholder.style.display = 'none';
-        document.getElementById('btnPostStory').disabled = false;
-
-        // Init Gestures
-        initEditorGestures(img);
-    }
-}
-async function uploadStory() {
-    if (!storyFileToUpload) return;
-
-    const btn = document.getElementById('btnPostStory');
-    btn.innerText = "Processing...";
-    btn.disabled = true;
-
-    try {
-        let finalFile = storyFileToUpload;
-
-        // IF IMAGE: Crop it using Canvas
-        if (storyFileToUpload.type.startsWith('image/')) {
-            finalFile = await cropImageToCanvas();
-        }
-
-        const isPrivate = document.getElementById('storyPrivacyToggle').checked;
-
-        btn.innerText = "Uploading...";
-        const mediaUrl = await uploadFileToStorage(finalFile);
-
-        await db.collection('stories').add({
-            userId: currentUser.uid,
-            userName: window.currentUserData.name,
-            userPic: window.currentUserData.profilePic || "",
-            mediaUrl: mediaUrl,
-            mediaType: storyFileToUpload.type.startsWith('video/') ? 'video' : 'image',
-            isPrivate: isPrivate,
-            viewers: [],
-            createdAt: new Date(),
-            expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000)
-        });
-
-        closeModal('storyUploadModal');
-        btn.innerText = "Post Story";
-        loadStories();
-        showToast("Story Added!");
-
-    } catch (e) {
-        console.error(e);
-        showToast("Upload failed.");
-        btn.innerText = "Post Story";
-        btn.disabled = false;
-    }
-}
 
 /* --- CANVAS CROPPER UTILITY --- */
 /* --- PRECISE CANVAS CROPPER (WYSIWYG) --- */
@@ -4510,84 +3789,8 @@ function cropImageToCanvas() {
 }
 
 let lastStoryOrigin = null;
-function openStoryViewer(group, sourceElement) {
-    activeStoryGroup = group;
-
-    // 1. Calculate Start Index (First Unseen)
-    currentStoryIndex = group.items.findIndex(item =>
-        !item.viewers || !item.viewers.includes(currentUser.uid)
-    );
-    if (currentStoryIndex === -1) currentStoryIndex = 0;
-
-    const modal = document.getElementById('storyViewerModal');
-
-    // 2. CALCULATE ANIMATION ORIGIN
-    if (sourceElement) {
-        const rect = sourceElement.getBoundingClientRect();
-        // Find center of the clicked bubble
-        const centerX = rect.left + (rect.width / 2);
-        const centerY = rect.top + (rect.height / 2);
-
-        // Apply origin to the modal so it grows FROM this point
-        modal.style.transformOrigin = `${centerX}px ${centerY}px`;
-
-        // Save for closing animation
-        lastStoryOrigin = `${centerX}px ${centerY}px`;
-    }
-
-    // 3. ACTIVATE & ANIMATE
-    modal.classList.remove('story-zoom-out'); // Safety reset
-    modal.classList.add('active'); // Make visible (display: flex)
-
-    // Force Reflow (flush CSS changes before adding animation class)
-    void modal.offsetWidth;
-
-    modal.classList.add('story-zoom-in');
-
-    // 4. Clean up animation class after it finishes (clean state)
-    setTimeout(() => {
-        modal.classList.remove('story-zoom-in');
-        modal.style.transform = 'scale(1)'; // Ensure it stays open
-        modal.style.opacity = '1';
-        modal.style.borderRadius = '0';
-    }, 360);
-
-    renderStoryFrame();
-}
 
 /* --- ANIMATED STORY CLOSER (Fixed: No Flicker) --- */
-function closeStoryViewer() {
-    const modal = document.getElementById('storyViewerModal');
-
-    // 1. Pause Content
-    clearTimeout(storyTimer);
-    const vid = document.querySelector('#storyViewContent video');
-    if (vid) vid.pause();
-
-    // 2. Set Origin (Use the one we saved when opening)
-    if (lastStoryOrigin) {
-        modal.style.transformOrigin = lastStoryOrigin;
-    }
-
-    // 3. ADD CLOSING ANIMATION
-    modal.classList.add('story-zoom-out');
-
-    // 4. Wait for Animation, THEN hide
-    // Increased delay slightly (250ms -> 300ms) to ensure animation finishes fully
-    setTimeout(() => {
-        modal.classList.remove('active');       // Hide display
-        modal.classList.remove('story-zoom-out'); // Reset anim class
-
-        // Reset properties
-        modal.style.transform = '';
-        modal.style.opacity = '';
-        modal.style.borderRadius = '';
-
-        // 5. UPDATE RING COLOR LOCALLY (Instead of reloading everything)
-        updateLocalStoryRing();
-
-    }, 300);
-}
 
 /* --- HELPER: Turn Ring Grey without Reloading --- */
 function updateLocalStoryRing() {
@@ -4684,85 +3887,8 @@ function renderStoryFrame() {
     }
 }
 
-function nextStory() {
-    if (currentStoryIndex < activeStoryGroup.items.length - 1) {
-        currentStoryIndex++;
-        renderStoryFrame(); // This triggers the new slide animation
-    } else {
-        closeStoryViewer(); // Close if no more stories
-    }
-}
 
-function prevStory() {
-    if (currentStoryIndex > 0) {
-        currentStoryIndex--;
-        renderStoryFrame();
-    } else {
-        // Optional: Go to previous user's story if we implement multi-user flow
-        // For now, just restart or do nothing
-        currentStoryIndex = 0;
-        renderStoryFrame();
-    }
-}
-function toggleStoryMenu(event) {
-    event.stopPropagation();
 
-    const menu = document.getElementById('storyOptionsMenu');
-    const isActive = menu.classList.contains('active');
-
-    if (isActive) {
-        menu.classList.remove('active');
-        resumeStoryPlayback();
-    } else {
-        menu.classList.add('active');
-        pauseStoryPlayback();
-    }
-}
-
-function deleteCurrentStory() {
-    // 1. Pause
-    pauseStoryPlayback();
-
-    // 2. Custom App Confirmation (No Native Prompt)
-    showConfirm(
-        "Delete Story?",
-        "This will disappear forever.",
-        () => {
-            // CONFIRMED ACTION
-            const story = activeStoryGroup.items[currentStoryIndex];
-            const storyId = story.id;
-            const userId = story.userId;
-
-            // Optimistic UI Update: Remove from local list immediately
-            activeStoryGroup.items.splice(currentStoryIndex, 1);
-
-            // DB Delete
-            db.collection('stories').doc(storyId).delete();
-
-            showToast("Story deleted.");
-
-            // Decide where to go next
-            if (activeStoryGroup.items.length === 0) {
-                // User has no more stories
-                closeStoryViewer();
-
-                // FORCE REMOVE BUBBLE FROM DOM IMMEDIATELY
-                const bubble = document.getElementById(`story-bubble-${userId}`);
-                if (bubble) bubble.remove();
-
-            } else {
-                // Advance to next story
-                if (currentStoryIndex >= activeStoryGroup.items.length) {
-                    currentStoryIndex = activeStoryGroup.items.length - 1;
-                }
-                renderStoryFrame();
-            }
-        }
-    );
-
-    // Note: If user clicks "Cancel" in showConfirm, the story stays paused.
-    // They can simply tap next/prev to resume.
-}
 
 function pauseStoryPlayback() {
     clearTimeout(storyTimer);
@@ -5003,114 +4129,9 @@ window.currentEventSort = 'soon';  // 'soon', 'late'
 window.allEventsCache = []; // Store data here so we don't re-fetch from Firebase on every filter click
 
 /* --- MAIN LOADER --- */
-function loadEvents() {
-    const listEl = document.getElementById('eventsList');
-    if (!listEl) return;
-
-    listEl.innerHTML = '<p style="text-align:center; color:var(--text-secondary); margin-top:20px;">Fetching latest events...</p>';
-
-    if (currentUser && typeof ADMIN_UIDS !== 'undefined' && ADMIN_UIDS.includes(currentUser.uid)) {
-        const btn = document.getElementById('adminAddEventBtn');
-        if (btn) btn.style.display = 'flex';
-    }
-    // Fetch from Firebase ONCE
-    db.collection('events')
-        .get()
-        .then(snap => {
-            if (snap.empty) {
-                listEl.innerHTML = `
-                  <div class="empty-state-new" style="margin-top:20px;">
-                      <div style="font-size:30px; margin-bottom:10px;">zzz</div>
-                      No upcoming events found.
-                  </div>`;
-                return;
-            }
-
-            // 1. Process and Cache Data
-            window.allEventsCache = [];
-            snap.forEach(doc => {
-                const data = doc.data();
-                // Try to parse the Date string (e.g., "Oct 24, 2025") into a Timestamp for sorting
-                const parsedDate = new Date(data.Date);
-
-                window.allEventsCache.push({
-                    id: doc.id,
-                    ...data,
-                    // If parsing fails (invalid date string), treat it as far future (9999) so it sinks to bottom
-                    timestamp: isNaN(parsedDate) ? 9999999999999 : parsedDate.getTime()
-                });
-            });
-
-            // 2. Render based on current filters
-            renderEventsList();
-        })
-        .catch(err => {
-            console.error("Error loading events:", err);
-            listEl.innerHTML = '<p style="color:var(--danger-color); text-align:center;">Failed to load events.</p>';
-        });
-}
 /* --- MANUAL EVENT LOGIC --- */
 
-function openAddEventModal() {
-    document.getElementById('addEventModal').classList.add('active');
-}
 
-function submitManualEvent() {
-    const title = document.getElementById('manualTitle').value.trim();
-    const date = document.getElementById('manualDate').value.trim();
-    const loc = document.getElementById('manualLocation').value.trim();
-    const link = document.getElementById('manualLink').value.trim();
-    const desc = document.getElementById('manualDesc').value.trim();
-    const type = document.getElementById('manualType').value;
-
-    if (!title || !date || !link) {
-        return alert("Title, Date, and Link are required.");
-    }
-
-    // Create a safe ID
-    const safeId = "manual_" + Date.now();
-
-    // Use a generic logo based on type or a standard V-SYNC logo
-    let logoUrl = "https://cdn-icons-png.flaticon.com/512/1005/1005141.png"; // Default Code Icon
-    if (type === 'hackathon') logoUrl = "https://cdn-icons-png.flaticon.com/512/2010/2010990.png";
-    if (type === 'workshop') logoUrl = "https://cdn-icons-png.flaticon.com/512/1005/1005141.png";
-    if (type === 'fest') logoUrl = "https://cdn-icons-png.flaticon.com/512/2452/2452243.png"; // Party icon
-
-    const eventData = {
-        Title: title,
-        Date: date,
-        Location: loc,
-        Link: link,
-        Description: desc,
-        type: type,
-        sourceName: "V-SYNC Official", // Mark it as official
-        sourceUrl: link,
-        sourceLogo: logoUrl,
-        scrapedAt: new Date(),
-        isManual: true // Helper flag
-    };
-
-    // Save to Firestore
-    db.collection('events').doc(safeId).set(eventData)
-        .then(() => {
-            alert("Event Published!");
-            closeModal('addEventModal');
-
-            // Clear inputs
-            document.getElementById('manualTitle').value = "";
-            document.getElementById('manualDate').value = "";
-            document.getElementById('manualLocation').value = "";
-            document.getElementById('manualLink').value = "";
-            document.getElementById('manualDesc').value = "";
-
-            // Refresh List
-            loadEvents();
-        })
-        .catch(err => {
-            console.error(err);
-            alert("Error adding event: " + err.message);
-        });
-}
 
 /* --- RENDERER (Handles Filter/Sort Logic) --- */
 function renderEventsList() {
@@ -5225,20 +4246,8 @@ function renderEventsList() {
 }
 
 /* --- FILTER MODAL CONTROLS --- */
-function openEventFilterModal() {
-    document.getElementById('eventFilterModal').classList.add('active');
-    updateEventFilterUI();
-}
 
-function setEventFilter(type) {
-    window.currentEventFilter = type;
-    updateEventFilterUI();
-}
 
-function setEventSort(type) {
-    window.currentEventSort = type;
-    updateEventFilterUI();
-}
 
 function updateEventFilterUI() {
     // Update Filter Pills
@@ -5254,12 +4263,22 @@ function updateEventFilterUI() {
     });
 }
 
-function applyEventFilters() {
-    closeModal('eventFilterModal');
-    renderEventsList(); // Re-render with new settings
-}
 
-function upvote(id) { const ref = db.collection('posts').doc(id); ref.get().then(doc => { if (doc.data().authorId === currentUser.uid) return alert("Cannot upvote self"); const upvoters = doc.data().upvoters || []; const hasUpvoted = upvoters.includes(currentUser.uid); ref.update({ upvotes: firebase.firestore.FieldValue.increment(hasUpvoted ? -1 : 1), upvoters: hasUpvoted ? upvoters.filter(x => x !== currentUser.uid) : [...upvoters, currentUser.uid] }).then(loadCommunity); }); }
+async function upvote(id) {
+    if (!currentUser) return alert("You must be logged in to upvote.");
+    try {
+        const res = await fetch('http://localhost:3000/api/upvotes/toggle', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ post_id: id, user_id: 1 }) // Simplified static user ID for migration since full auth is mocked
+        });
+        const data = await res.json();
+        if (data.error) throw new Error(data.error);
+        loadCommunity(true);
+    } catch (err) {
+        console.error("Upvote failed:", err);
+    }
+}
 function upvoteComment(pid, cid) { const ref = db.collection('posts').doc(pid).collection('comments').doc(cid); ref.get().then(doc => { const data = doc.data(); if (data.authorId === currentUser.uid) return; const upvoters = data.upvoters || []; const hasUpvoted = upvoters.includes(currentUser.uid); ref.update({ upvotes: firebase.firestore.FieldValue.increment(hasUpvoted ? -1 : 1), upvoters: hasUpvoted ? upvoters.filter(id => id !== currentUser.uid) : [...upvoters, currentUser.uid] }).then(() => loadComments(pid)); }); }
 
 // --- PROFILE ---
@@ -5842,15 +4861,6 @@ function updateSeenStatus(messages, otherUserReadTime, container) {
         }
     }
 }
-function closeChatView() {
-    unlockScroll();
-    document.getElementById('chats').classList.remove('mobile-chat-open');
-
-    // SHOW BOTTOM TABS AGAIN
-    if (window.innerWidth <= 600) {
-        document.querySelector('.tabs').style.display = 'flex';
-    }
-}
 // --- ENABLE ENTER TO SEND (Shift+Enter for New Line) ---
 function setupEnterKeySubmits() {
 
@@ -6026,14 +5036,11 @@ function loadLeaderboard() {
         console.log("User not logged in yet.");
     }
 
-    // 3. FETCH DATA
-    db.collection('users')
-        .where('role', '==', 'mentor')
-        .orderBy('score', 'desc')
-        .limit(50)
-        .get()
-        .then(snap => {
-            if (snap.empty) {
+    // 3. FETCH DATA FROM SQL
+    fetch('http://localhost:3000/api/leaderboard')
+        .then(res => res.json())
+        .then(sqlUsers => {
+            if (!sqlUsers || sqlUsers.length === 0) {
                 listEl.innerHTML = '<p style="text-align:center;">No mentors found yet.</p>';
                 return;
             }
@@ -6041,8 +5048,17 @@ function loadLeaderboard() {
             let html = '';
             let rank = 1;
 
-            snap.forEach(doc => {
-                const u = doc.data();
+            sqlUsers.forEach(row => {
+                // Map SQL row to frontend's expected user object
+                const u = {
+                    name: row.username,
+                    score: row.score,
+                    profilePic: "",
+                    skills: ["SQL Data"],
+                    college: "Migrated",
+                    year: "4",
+                    isVerified: true
+                };
                 const score = u.score || 0;
 
                 let rankClass = 'rank-other';
