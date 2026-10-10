@@ -1,144 +1,47 @@
 const express = require('express');
-const mysql = require('mysql2/promise');
 const cors = require('cors');
+const mysql = require('mysql2/promise');
 
 const app = express();
-const port = 3000;
+const PORT = 3000;
 
-// Middleware
-app.use(cors());
-app.use((req, res, next) => {
-    res.header('Access-Control-Allow-Origin', '*');
-    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-    res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
-    if (req.method === 'OPTIONS') {
-        return res.sendStatus(200);
-    }
-    next();
-});
+// 1. CORS must be the absolute first middleware
+app.use(cors({
+    origin: '*', // Allows all local IP variants (localhost, 127.0.0.1)
+    methods: ['GET', 'POST', 'DELETE']
+}));
 app.use(express.json());
-app.use(express.static('src')); // Serve frontend HTML and JS from src folder
-app.use(express.static('public')); // Serve assets like favicon.ico from public folder
 
-// Database connection pool
+// 2. Database Connection Pool
 const pool = mysql.createPool({
     host: 'localhost',
-    user: 'root', // Update with your MySQL username
-    password: 'Root123!', // Update with your MySQL password
+    user: 'root',
+    password: 'Root123!',
     database: 'vsync_db',
     waitForConnections: true,
-    connectionLimit: 10,
-    queueLimit: 0
+    connectionLimit: 10
 });
 
-// Test database connection
+// 3. Boot Verification
 pool.getConnection()
-    .then((connection) => {
-        console.log('MySQL connected successfully');
-        connection.release();
-    })
-    .catch((err) => {
-        console.error('MySQL connection error:', err);
-    });
-// Helper for error handling
-const handleQueryError = (res, err) => {
-    console.error(err);
-    res.status(500).json({ error: 'Internal Server Error', details: err.message });
-};
+    .then(() => console.log('MySQL Connected Successfully'))
+    .catch(err => console.error('MySQL Connection Failed:', err.message));
 
-// --- RESTful Endpoints ---
-
-// Get all posts with user info and upvote counts
-app.get('/api/posts', async (req, res) => {
+// 4. API Routes
+app.post('/api/register', async (req, res) => {
+    const { firstName, lastName, email, password, currentYear, workExperience, profilePicture } = req.body;
     try {
-        const [rows] = await pool.query(`
-            SELECT 
-                p.post_id AS id, p.title, p.body AS content, p.created_at,
-                u.first_name AS username,
-                COUNT(v.user_id) AS upvotes
-            FROM posts p
-            JOIN users u ON p.user_id = u.user_id
-            LEFT JOIN upvotes v ON p.post_id = v.post_id
-            GROUP BY p.post_id, p.title, p.body, p.created_at, u.first_name
-            ORDER BY p.created_at DESC
-        `);
-        res.json(rows);
-    } catch (err) {
-        handleQueryError(res, err);
-    }
-});
-
-// Create a new post
-app.post('/api/posts', async (req, res) => {
-    const { user_id, title, content } = req.body;
-    if (!user_id || !title || !content) {
-        return res.status(400).json({ error: 'Missing required fields' });
-    }
-    
-    try {
-        const [result] = await pool.query(
-            'INSERT INTO posts (user_id, title, content) VALUES (?, ?, ?)',
-            [user_id, title, content]
+        const fullName = firstName + ' ' + lastName;
+        await pool.query(
+            'INSERT INTO users (first_name, email, password, current_year, work_experience, profile_picture) VALUES (?, ?, ?, ?, ?, ?)',
+            [fullName, email, password, currentYear, workExperience, profilePicture]
         );
-        res.status(201).json({ id: result.insertId, message: 'Post created successfully' });
+        res.json({ success: true });
     } catch (err) {
-        handleQueryError(res, err);
+        console.error('Registration Error:', err.message);
+        res.status(400).json({ success: false, message: 'Registration failed. Email might already exist.' });
     }
 });
-
-// Get the leaderboard view
-app.get('/api/leaderboard', async (req, res) => {
-    try {
-        const [rows] = await pool.query('SELECT * FROM LeaderboardView');
-        res.json(rows);
-    } catch (err) {
-        handleQueryError(res, err);
-    }
-});
-
-// Toggle an upvote using the Stored Procedure
-app.post('/api/upvotes/toggle', async (req, res) => {
-    const { post_id, user_id } = req.body;
-    if (!post_id || !user_id) {
-        return res.status(400).json({ error: 'Missing post_id or user_id' });
-    }
-
-    try {
-        await pool.query('CALL ToggleUpvote(?, ?)', [post_id, user_id]);
-        
-        // Return the new upvote count for convenience
-        const [countResult] = await pool.query(
-            'SELECT COUNT(*) as upvotes FROM upvotes WHERE post_id = ?', 
-            [post_id]
-        );
-        res.json({ message: 'Upvote toggled', upvotes: countResult[0].upvotes });
-    } catch (err) {
-        handleQueryError(res, err);
-    }
-});
-
-// Ensure user exists (utility for login/registration simulation)
-app.post('/api/users', async (req, res) => {
-    const { username } = req.body;
-    if (!username) {
-        return res.status(400).json({ error: 'Missing username' });
-    }
-
-    try {
-        const [existing] = await pool.query('SELECT * FROM users WHERE username = ?', [username]);
-        if (existing.length > 0) {
-            return res.json(existing[0]); // Return existing user
-        }
-        
-        const [result] = await pool.query('INSERT INTO users (username) VALUES (?)', [username]);
-        res.status(201).json({ id: result.insertId, username });
-    } catch (err) {
-        handleQueryError(res, err);
-    }
-});
-
-
-// --- AUTHENTICATION ---
 app.post('/api/login', async (req, res) => {
     const { email, password } = req.body;
     try {
@@ -149,20 +52,202 @@ app.post('/api/login', async (req, res) => {
         if (rows.length > 0) {
             res.json({ success: true, user: rows[0] });
         } else {
-            res.status(401).json({ success: false, message: 'Account not found' });
+            res.status(401).json({ success: false, message: 'Invalid credentials' });
         }
     } catch (err) {
-        console.error('Login Error:', err);
-        res.status(500).json({ success: false, message: 'Internal server error' });
+        console.error('Server Error:', err);
+        res.status(500).json({ success: false, message: 'Database error' });
     }
 });
 
-// Handle 404s (prevents Chrome DevTools CSP errors on .well-known paths)
-app.use((req, res) => {
-    res.status(404).send('Not Found');
+app.get('/api/posts', async (req, res) => {
+    try {
+        const userId = req.query.user_id || '1'; // Default if none provided
+        const [rows] = await pool.query(
+            'SELECT p.post_id, p.title, p.content, p.created_at, p.author_id, u.first_name, ' +
+            '(SELECT COUNT(*) FROM votes WHERE post_id = p.post_id AND vote_value = 1) AS upvotes, ' +
+            '(SELECT COUNT(*) FROM votes WHERE post_id = p.post_id AND vote_value = -1) AS downvotes, ' +
+            '(SELECT vote_value FROM votes WHERE post_id = p.post_id AND user_id = ?) AS user_vote ' +
+            'FROM posts p JOIN users u ON p.author_id = u.user_id ORDER BY p.created_at DESC',
+            [userId]
+        );
+        res.json({ success: true, posts: rows });
+    } catch (err) {
+        console.error('Feed Fetch Error:', err.message);
+        res.status(500).json({ success: false, message: 'Database error' });
+    }
 });
 
-// Start the server
-app.listen(port, () => {
-    console.log(`V-SYNC API server listening on port ${port}`);
+app.post('/api/posts', async (req, res) => {
+    const { author_id, title, content, category_id } = req.body;
+    try {
+        await pool.query(
+            'INSERT INTO posts (author_id, title, content, category_id) VALUES (?, ?, ?, ?)',
+            [author_id, title, content, category_id]
+        );
+        res.json({ success: true, message: 'Post created' });
+    } catch (err) {
+        console.error('Post Creation Error:', err.message);
+        res.status(500).json({ success: false, message: 'Database error' });
+    }
+});
+
+app.delete('/api/posts/:postId', async (req, res) => {
+    try {
+        const { postId } = req.params;
+        const { user_id } = req.query;
+        const [result] = await pool.query('DELETE FROM posts WHERE post_id = ? AND author_id = ?', [postId, user_id]);
+        
+        if (result.affectedRows === 0) {
+            return res.status(403).json({ success: false, message: 'Unauthorized or Post not found' });
+        }
+        res.json({ success: true, message: 'Post deleted' });
+    } catch (err) {
+        console.error('Post Deletion Error:', err.message);
+        res.status(500).json({ success: false, message: 'Database error' });
+    }
+});
+
+app.get('/api/leaderboard', async (req, res) => {
+    try {
+        const [rows] = await pool.query('SELECT u.user_id, u.first_name, COALESCE(SUM(p.vote_count), 0) as total_score FROM users u LEFT JOIN posts p ON u.user_id = p.author_id GROUP BY u.user_id ORDER BY total_score DESC LIMIT 10');
+        res.json({ success: true, leaderboard: rows });
+    } catch (err) {
+        console.error('Server Error:', err);
+        res.status(500).json({ success: false, message: 'Database error' });
+    }
+});
+
+app.post('/api/vote', async (req, res) => {
+    const { user_id, post_id, vote_value } = req.body;
+    try {
+        const [existing] = await pool.query('SELECT vote_value FROM votes WHERE user_id = ? AND post_id = ?', [user_id, post_id]);
+        if (existing.length > 0 && existing[0].vote_value === vote_value) {
+            await pool.query('DELETE FROM votes WHERE user_id = ? AND post_id = ?', [user_id, post_id]);
+        } else {
+            await pool.query('REPLACE INTO votes (user_id, post_id, vote_value) VALUES (?, ?, ?)', [user_id, post_id, vote_value]);
+        }
+        res.json({ success: true });
+    } catch (err) {
+        console.error('Vote Error:', err.message);
+        res.status(500).json({ success: false, message: 'Database error' });
+    }
+});
+
+app.get('/api/users/:id', async (req, res) => {
+    try {
+        const [rows] = await pool.query('SELECT first_name, email, current_year, work_experience, profile_picture, created_at FROM users WHERE user_id = ?', [req.params.id]);
+        res.json({ success: true, profile: rows[0] });
+    } catch (err) {
+        console.error('Profile Error:', err.message);
+        res.status(500).json({ success: false, message: 'Database error' });
+    }
+});
+
+app.delete('/api/users/:id', async (req, res) => {
+    try {
+        await pool.query('DELETE FROM users WHERE user_id = ?', [req.params.id]);
+        res.json({ success: true });
+    } catch (err) {
+        console.error('User Deletion Error:', err.message);
+        res.status(500).json({ success: false, message: 'Database error' });
+    }
+});
+
+app.get('/api/comments/:postId', async (req, res) => {
+    try {
+        const [rows] = await pool.query('SELECT c.content, c.created_at, u.first_name FROM comments c JOIN users u ON c.author_id = u.user_id WHERE c.post_id = ? ORDER BY c.created_at ASC', [req.params.postId]);
+        res.json({ success: true, comments: rows });
+    } catch (err) {
+        console.error('Comments Fetch Error:', err.message);
+        res.status(500).json({ success: false, message: 'Database error' });
+    }
+});
+
+app.post('/api/comments', async (req, res) => {
+    const { post_id, author_id, content } = req.body;
+    try {
+        await pool.query('INSERT INTO comments (post_id, author_id, content) VALUES (?, ?, ?)', [post_id, author_id, content]);
+        res.json({ success: true });
+    } catch (err) {
+        console.error('Comment Post Error:', err.message);
+        res.status(500).json({ success: false, message: 'Database error' });
+    }
+});
+
+app.get('/api/connections/users/:currentUserId', async (req, res) => {
+    try {
+        const [rows] = await pool.query('SELECT user_id, first_name, role, college FROM users WHERE user_id != ?', [req.params.currentUserId]);
+        res.json({ success: true, users: rows });
+    } catch (err) {
+        console.error('Connections Fetch Error:', err.message);
+        res.status(500).json({ success: false, message: 'Database error' });
+    }
+});
+
+app.post('/api/connections/follow', async (req, res) => {
+    const { follower_user, following_user } = req.body;
+    try {
+        const [existing] = await pool.query(
+            'SELECT status FROM followers WHERE follower_user = ? AND following_user = ?',
+            [follower_user, following_user]
+        );
+        if (existing.length > 0) {
+            await pool.query(
+                'DELETE FROM followers WHERE follower_user = ? AND following_user = ?',
+                [follower_user, following_user]
+            );
+        } else {
+            await pool.query(
+                'INSERT INTO followers (follower_user, following_user, status) VALUES (?, ?, ?)',
+                [follower_user, following_user, 'pending']
+            );
+        }
+        res.json({ success: true });
+    } catch (err) {
+        console.error('Follow Error:', err.message);
+        res.status(500).json({ success: false, message: 'Database error' });
+    }
+});
+
+app.post('/api/connections/accept', async (req, res) => {
+    const { follower_user, following_user } = req.body;
+    try {
+        await pool.query(
+            'UPDATE followers SET status = ? WHERE follower_user = ? AND following_user = ?',
+            ['accepted', follower_user, following_user]
+        );
+        res.json({ success: true });
+    } catch (err) {
+        console.error('Accept Connection Error:', err.message);
+        res.status(500).json({ success: false, message: 'Database error' });
+    }
+});
+
+app.get('/api/network/discover/:id', async (req, res) => {
+    try {
+        const [rows] = await pool.query('SELECT user_id, first_name, role, college FROM users WHERE user_id != ?', [req.params.id]);
+        res.json({ success: true, users: rows });
+    } catch (err) {
+        console.error('Discover Error:', err.message);
+        res.status(500).json({ success: false, message: 'Database error' });
+    }
+});
+
+app.get('/api/network/connected/:id', async (req, res) => {
+    try {
+        const [rows] = await pool.query(
+            'SELECT u.user_id, u.first_name, u.role, u.college, f.status, f.follower_user, f.following_user FROM users u JOIN followers f ON (u.user_id = f.follower_user OR u.user_id = f.following_user) WHERE (f.following_user = ? AND f.status = \'pending\' AND u.user_id = f.follower_user) OR (f.status = \'accepted\' AND u.user_id != ?)',
+            [req.params.id, req.params.id]
+        );
+        res.json({ success: true, users: rows });
+    } catch (err) {
+        console.error('Connected Error:', err.message);
+        res.status(500).json({ success: false, message: 'Database error' });
+    }
+});
+
+// 5. Server Initialization
+app.listen(PORT, '127.0.0.1', () => {
+    console.log(`V-SYNC API server listening on http://127.0.0.1:${PORT}`);
 });

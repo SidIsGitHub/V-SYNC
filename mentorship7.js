@@ -3,25 +3,7 @@
 let currentUser = JSON.parse(localStorage.getItem('currentUser') || 'null');
 window.currentUser = currentUser;
 
-// Dummy db object to prevent crashes on non-migrated functions during sequential execution
-const db = {
-    collection: () => ({
-        doc: () => ({
-            get: async () => ({ exists: false, data: () => ({}) }),
-            set: async () => {},
-            update: async () => {},
-            delete: async () => {},
-            onSnapshot: () => () => {},
-            collection: () => db.collection()
-        }),
-        where: () => db.collection(),
-        orderBy: () => db.collection(),
-        limit: () => db.collection(),
-        get: async () => ({ docs: [], empty: true }),
-        add: async () => ({ id: 'dummy' }),
-        onSnapshot: () => () => {}
-    })
-};
+
 
 // --- DAILY POLL LOGIC ---
 
@@ -51,14 +33,7 @@ function containsSensitiveContent(text) {
 
 // 3. (Optional) Log the attempt to the server for Admins to see
 function logModerationAttempt(text, type) {
-    db.collection('moderation_logs').add({
-        userId: currentUser.uid,
-        userName: window.currentUserData.name,
-        content: text,
-        type: type, // 'post' or 'comment'
-        timestamp: new Date(),
-        reason: "Auto-moderated for banned words"
-    });
+    console.log("Moderation event:", text, type);
 }
 
 function openDailyPoll() {
@@ -606,7 +581,7 @@ if (savedUid) {
 
 // 3. Define Logout Function (To clear the save)
 // 3. Define Logout Function (To clear the save)
-window.performLogout = function() {
+window.performLogout = function () {
     // REPLACED NATIVE CONFIRM WITH CUSTOM MODAL
     showConfirm(
         "Log Out?",
@@ -614,7 +589,7 @@ window.performLogout = function() {
         () => {
             // Clear saved data
             localStorage.removeItem('vsync_uid');
-            
+
             // Reload page to reset everything cleanly
             window.location.reload();
         }
@@ -906,11 +881,11 @@ function simulateLogin(uid, isAnonSession) {
             };
         } else {
             window.currentUserData = { ...realData, isAnonymousSession: false };
-            
+
             // --- 🔹 NEW: SAVE SESSION TO BROWSER ---
-            localStorage.setItem('vsync_uid', uid); 
+            localStorage.setItem('vsync_uid', uid);
         }
-        
+
         window.currentUser = { uid: doc.id };
         currentUser = window.currentUser;
         currentUserData = window.currentUserData;
@@ -1024,7 +999,7 @@ function addExperienceField() {
 // --- AUTH: REGISTER HANDLER (FIXED) ---
 async function handleLogin(event) {
     event.preventDefault();
-    
+
     // Automatically grabs values based on input types, bypassing ID mismatches
     const emailField = document.querySelector('input[type="email"]');
     const passwordField = document.querySelector('input[type="password"]');
@@ -1035,7 +1010,7 @@ async function handleLogin(event) {
     console.log("Attempting login with:", email);
 
     try {
-        const response = await fetch('http://localhost:3000/api/login', {
+        const response = await fetch('http://127.0.0.1:3000/api/login', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -1048,23 +1023,25 @@ async function handleLogin(event) {
         if (response.ok && data.success) {
             console.log("Login Success:", data);
             alert("Login Successful! Welcome, " + data.user.first_name);
-            
+
             // Map SQL user_id to id and uid for legacy compatibility
             data.user.id = data.user.user_id;
             data.user.uid = data.user.user_id;
+            localStorage.setItem('user_id', data.user.user_id);
 
             // Critical initializations to fix the UI errors
             document.getElementById('authScreen').classList.add('hidden');
             document.getElementById('appScreen').classList.remove('hidden');
-            
+
             // Bind global data for the rest of the application
             window.currentUser = data.user;
             currentUser = window.currentUser;
             window.currentUserData = data.user;
             currentUserData = window.currentUserData;
 
-            if (typeof updateUserInfo === 'function') updateUserInfo();
+            if (typeof updateUserInfo === 'function') updateUserInfo(data.user);
             if (typeof switchTab === 'function') switchTab('community');
+            if (typeof window.forceLoadProfile === 'function') window.forceLoadProfile();
         } else {
             console.error("Login Failed:", data.message);
             alert("Login failed: " + data.message);
@@ -1075,7 +1052,7 @@ async function handleLogin(event) {
     }
 }
 
-function handleRegister(e) {
+async function handleRegister(e) {
     e.preventDefault();
     const submitBtn = e.target.querySelector('button[type="submit"]');
     const originalText = submitBtn.innerText;
@@ -1083,29 +1060,27 @@ function handleRegister(e) {
     submitBtn.disabled = true;
     submitBtn.innerText = "Creating Account...";
 
-    // 1. Get Values & Capitalize Logic
-    const isAnon = document.getElementById('regAnon').checked;
-
-    // --- NEW NAME LOGIC START ---
-    const fNameRaw = document.getElementById('regFirstName').value.trim();
-    const lNameRaw = document.getElementById('regLastName').value.trim();
-
-    // Helper to Capitalize (e.g. "raHUL" -> "Rahul")
-    const formatName = (str) => {
-        if (!str) return "";
-        return str.charAt(0).toUpperCase() + str.slice(1).toLowerCase();
-    };
-
-    const fullName = `${formatName(fNameRaw)} ${formatName(lNameRaw)}`;
-    // --- NEW NAME LOGIC END ---
-
+    const firstName = document.getElementById('regFirstName').value.trim();
+    const lastName = document.getElementById('regLastName').value.trim();
     const email = document.getElementById('regEmail').value.trim().toLowerCase();
     const password = document.getElementById('regPass').value;
-    const age = document.getElementById('regAge').value;
-    const gender = document.getElementById('regGender').value;
-    const year = document.getElementById('regYear').value;
-    const college = document.getElementById('regCollege').value;
-    const role = document.getElementById('regRole').value;
+    const currentYear = document.querySelector('select[id="regYear"]').value;
+    console.log("Extracted currentYear:", currentYear);
+
+    // Work Experience
+    const expInputs = document.querySelectorAll('.exp-input');
+    const workExperience = Array.from(expInputs).map(i => i.value.trim()).filter(v => v).join(', ');
+
+    // Profile Picture
+    let profilePicture = null;
+    const fileInput = document.getElementById('regFile');
+    if (fileInput && fileInput.files && fileInput.files[0]) {
+        profilePicture = await new Promise((resolve) => {
+            const reader = new FileReader();
+            reader.onload = (e) => resolve(e.target.result);
+            reader.readAsDataURL(fileInput.files[0]);
+        });
+    }
 
     if (!password || password.length < 6) {
         alert("Password must be at least 6 characters.");
@@ -1114,60 +1089,27 @@ function handleRegister(e) {
         return;
     }
 
-    const performRegistration = (base64Pic) => {
-        const newUserId = "user_" + Date.now();
-
-        // Collect Work Experience
-        const workExpInputs = document.querySelectorAll('.exp-input');
-        const expertise = [];
-        workExpInputs.forEach(input => {
-            if (input.value.trim()) expertise.push(input.value.trim());
+    try {
+        const res = await fetch('http://127.0.0.1:3000/api/register', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ firstName, lastName, email, password, currentYear, workExperience, profilePicture })
         });
-
-        const newUser = {
-            userId: newUserId,
-            name: fullName, // <--- SAVING THE FORMATTED NAME
-            email: email,
-            role: role,
-            year: year,
-            college: college,
-            age: age,
-            gender: gender,
-            profilePic: base64Pic || "",
-            expertise: expertise,
-            isVerified: false,
-            score: 0,
-            createdAt: new Date(),
-            password: password
-        };
-
-        // 2. Save to Firestore
-        db.collection('users').doc(newUserId).set(newUser)
-            .then(() => {
-                if (typeof showToast === 'function') showToast("Account created!");
-                simulateLogin(newUserId, isAnon);
-            })
-            .catch(err => {
-                console.error(err);
-                alert("Error: " + err.message);
-                submitBtn.innerText = originalText;
-                submitBtn.disabled = false;
-            });
-    };
-
-    // 4. Handle File Upload
-    if (window.registerProfileBase64) {
-        performRegistration(window.registerProfileBase64);
+        const data = await res.json();
+        
+        if (data.success) {
+            alert("Account created successfully!");
+            toggleAuthMode('login');
+        } else {
+            alert(data.message || "Registration failed");
+        }
+    } catch (err) {
+        console.error(err);
+        alert("Server error during registration.");
     }
-    // 2. Fallback to raw file (if user skipped crop somehow? shouldn't happen)
-    else if (document.getElementById('regFile').files.length > 0) {
-        const reader = new FileReader();
-        reader.onload = function (e) { performRegistration(e.target.result); };
-        reader.readAsDataURL(document.getElementById('regFile').files[0]);
-    }
-    else {
-        performRegistration(null);
-    }
+
+    submitBtn.disabled = false;
+    submitBtn.innerText = originalText;
 }
 /* --- TOGGLE PASSWORD VISIBILITY --- */
 function togglePasswordVisibility(inputId, iconDiv) {
@@ -1226,45 +1168,26 @@ function initNotificationListener() {
 
 
 async function deleteAccount() {
-    // REPLACED NATIVE CONFIRM WITH CUSTOM UI
-    showConfirm(
-        "Delete Account?", 
-        "⚠️ This will permanently delete your profile, posts, and chats. This cannot be undone.", 
-        async () => {
-            const user = auth.currentUser;
-            const userId = user.uid;
-
-            try {
-                showToast("Deleting data...");
-                
-                // 1. Delete Posts
-                const postsSnap = await db.collection('posts').where('authorId', '==', userId).get();
-                const batch = db.batch();
-                postsSnap.forEach(doc => batch.delete(doc.ref));
-                await batch.commit();
-
-                // 2. Delete User Doc
-                await db.collection('users').doc(userId).delete();
-
-                // 3. Delete Auth
-                await user.delete();
-
-                showToast("✅ Account Deleted");
-                setTimeout(() => {
-                    localStorage.removeItem('vsync_uid');
-                    window.location.reload();
-                }, 1500);
-
-            } catch (error) {
-                console.error(error);
-                if (error.code === 'auth/requires-recent-login') {
-                    showToast("⚠️ Security: Please re-login and try again.");
-                } else {
-                    showToast("❌ Delete Failed: " + error.message);
-                }
+    if (confirm("Delete Account?\n\n⚠️ This will permanently delete your profile, posts, and chats. This cannot be undone.")) {
+        const userId = localStorage.getItem('user_id') || localStorage.getItem('vsync_uid') || window.currentUser?.uid;
+        if (!userId) return;
+        
+        try {
+            const res = await fetch('http://127.0.0.1:3000/api/users/' + userId, { method: 'DELETE' });
+            const data = await res.json();
+            
+            if (data.success) {
+                alert("Account deleted.");
+                localStorage.clear();
+                window.location.reload();
+            } else {
+                alert("Delete failed.");
             }
+        } catch (error) {
+            console.error("Delete Failed:", error);
+            alert("Delete Failed: " + error.message);
         }
-    );
+    }
 }
 
 
@@ -1284,7 +1207,52 @@ function switchTab(arg1, arg2) {
 
     if (tabName === 'community') loadCommunity();
     if (tabName === 'leaderboard') loadLeaderboard();
+    if (tabName === 'profile') {
+        if (typeof window.forceLoadProfile === 'function') window.forceLoadProfile();
+    }
 }
+
+// --- BULLETPROOF PROFILE HYDRATION ---
+window.forceLoadProfile = async function() {
+    try {
+        const uid = localStorage.getItem('user_id') || (window.currentUser && (window.currentUser.user_id || window.currentUser.uid)) || '1';
+        if (!localStorage.getItem('user_id')) localStorage.setItem('user_id', uid);
+        const apiBase = window.location.origin.includes(':3000') ? '' : 'http://127.0.0.1:3000';
+        const res = await fetch(`${apiBase}/api/users/${localStorage.getItem('user_id')}`);
+        const data = await res.json();
+        if (data && data.success && data.profile) {
+            const p = data.profile;
+            const emailEl = document.getElementById('profileEmail');
+            if (emailEl) emailEl.textContent = p.email;
+            
+            const yearEl = document.getElementById('profileYear');
+            if (yearEl) yearEl.textContent = p.current_year || 'Not specified';
+            
+            const dateEl = document.getElementById('profileDate');
+            if (dateEl) dateEl.textContent = p.created_at ? new Date(p.created_at).toLocaleDateString() : 'Recently';
+            
+            const topNav = document.getElementById('topNavInitial');
+            if (topNav && p.first_name) topNav.textContent = p.first_name.charAt(0).toUpperCase();
+
+            const avatarBox = document.getElementById('profileAvatarBox');
+            if (avatarBox) {
+                if (p.profile_picture && p.profile_picture !== 'null') {
+                    avatarBox.innerHTML = `<img src="${p.profile_picture}" style="width:100px;height:100px;border-radius:50%;object-fit:cover;margin:0 auto;">`;
+                } else if (p.first_name) {
+                    avatarBox.innerHTML = `<div style="width:100px;height:100px;border-radius:50%;background:#333;margin:0 auto;display:flex;align-items:center;justify-content:center;font-size:32px;">${p.first_name.charAt(0).toUpperCase()}</div>`;
+                }
+            }
+
+            const expEl = document.getElementById('profileExperience');
+            if (expEl) expEl.textContent = p.work_experience || 'No experience added.';
+
+            const nameEl = document.getElementById('profileName');
+            if (nameEl && p.first_name) nameEl.textContent = p.first_name;
+        }
+    } catch (e) {
+        console.error(e);
+    }
+};
 
 // --- CONTEXT MENU LOGIC (Dynamic) ---
 let contextMenuTarget = { type: null, id1: null, id2: null };
@@ -1488,7 +1456,7 @@ async function deleteConversation(chatId) {
         // 5. REFRESH & EXIT
         showToast("Conversation wiped clean.");
         loadChats(); // Refresh the list
-        
+
         if (window.innerWidth <= 600) {
             closeChatView(); // Close the mobile view
         }
@@ -1913,38 +1881,17 @@ function insertEmoji(emoji) {
     input.focus();
 }
 // --- NAVBAR & USER INFO ---
-function updateUserInfo() {
-    if (window.currentUserData) {
-        const data = window.currentUserData;
-
-        let displayName, picUrl;
-
-        if (data.isAnonymousSession) {
-            displayName = "Anonymous";
-            // QUESTION MARK AVATAR
-            document.getElementById('navProfileContainer').innerHTML = `<div style="font-size:20px; font-weight:bold;">?</div>`;
-            document.getElementById('navProfileContainer').style.backgroundImage = 'none';
-            document.getElementById('navProfileContainer').style.border = '2px dashed #666';
-        } else {
-            displayName = (data.name || "User").charAt(0).toUpperCase() + (data.name || "User").slice(1);
-            picUrl = data.profilePic;
-
-            const profileIcon = document.getElementById('navProfileContainer');
-            profileIcon.style.border = '1px solid var(--border-color)';
-            if (picUrl) {
-                profileIcon.innerHTML = `<img src="${picUrl}" class="navbar-pic">`;
-            } else {
-                profileIcon.innerHTML = displayName.charAt(0);
-            }
-        }
-
-        document.getElementById('userInfo').textContent = `${displayName}`;
+function updateUserInfo(user) {
+    if (!user) user = window.currentUser || window.currentUserData;
+    const topNav = document.getElementById('topNavInitial');
+    if (topNav && user && user.first_name) {
+        topNav.textContent = user.first_name.charAt(0).toUpperCase();
     }
 }
 /* --- OPEN USER PROFILE (Global) --- */
 let currentViewedUserId = null;
 
-function openUserProfile(targetUserId) {
+window.openUserProfile = async function(targetUserId) {
     // 1. Prevent opening if it's me (optional: or redirect to My Profile tab)
     if (currentUser && targetUserId === currentUser.uid) {
         switchTab('profile');
@@ -1964,25 +1911,28 @@ function openUserProfile(targetUserId) {
     document.getElementById('viewSkillsContainer').innerHTML = '';
 
     // 2. Fetch User Data
-    db.collection('users').doc(targetUserId).get().then(async (doc) => {
-        if (!doc.exists) {
-            alert("User not found.");
-            closeModal('viewProfileModal');
+    try {
+        const res = await fetch(`http://127.0.0.1:3000/api/users/${targetUserId}`);
+        const data = await res.json();
+        
+        if (!data.success || !data.profile) {
+            if (typeof showToast === "function") showToast("User not found.");
+            if (typeof closeModal === "function") closeModal('viewProfileModal');
             return;
         }
 
-        const u = doc.data();
+        const u = data.profile;
 
         // RENDER HEADER
-        document.getElementById('viewProfileName').innerHTML = u.name + (u.isVerified ? ' <span style="color:#30D158">✔</span>' : '');
+        document.getElementById('viewProfileName').innerHTML = (u.first_name || 'Unknown') + (u.role === 'mentor' ? ' <span style="color:#30D158">✔</span>' : '');
 
         // Render Badge
         const badge = document.getElementById('viewProfileBadge');
         if (u.role === 'mentor') {
-            badge.innerText = u.isVerified ? "VERIFIED MENTOR" : "MENTOR";
-            badge.className = u.isVerified ? "badge badge-verified" : "badge";
-            badge.style.background = u.isVerified ? "rgba(48, 209, 88, 0.2)" : "rgba(255,255,255,0.1)";
-            badge.style.color = u.isVerified ? "#30D158" : "#ccc";
+            badge.innerText = "MENTOR";
+            badge.className = "badge badge-verified";
+            badge.style.background = "rgba(48, 209, 88, 0.2)";
+            badge.style.color = "#30D158";
         } else {
             badge.innerText = "STUDENT";
             badge.className = "badge";
@@ -1992,108 +1942,133 @@ function openUserProfile(targetUserId) {
 
         // Render Pic
         const picContainer = document.getElementById('viewProfilePicContainer');
-        if (u.profilePic) {
-            picContainer.innerHTML = `<img src="${u.profilePic}" style="width:100%; height:100%; object-fit:cover;">`;
-        } else {
-            picContainer.innerHTML = `<div style="font-size:40px; color:#888; font-weight:bold;">${u.name.charAt(0).toUpperCase()}</div>`;
-        }
+        picContainer.innerHTML = `<div style="font-size:40px; color:#888; font-weight:bold;">${(u.first_name || 'U').charAt(0).toUpperCase()}</div>`;
 
         // Render Info
         document.getElementById('viewInfoCollege').innerText = u.college || "N/A";
-        document.getElementById('viewInfoYear').innerText = u.year || "N/A";
-        if (u.joinedDate) {
-            const d = u.joinedDate.toDate ? u.joinedDate.toDate() : new Date(u.joinedDate);
-            document.getElementById('viewInfoJoined').innerText = d.toLocaleDateString();
+        document.getElementById('viewInfoYear').innerText = u.current_year || "N/A";
+        if (u.created_at) {
+            document.getElementById('viewInfoJoined').innerText = new Date(u.created_at).toLocaleDateString();
         }
 
         // Render Skills
         const skillsContainer = document.getElementById('viewSkillsContainer');
-        if (u.skills && u.skills.length > 0) {
-            skillsContainer.innerHTML = u.skills.map(s => `<span class="skill-tag-new">${s}</span>`).join('');
-        } else {
-            skillsContainer.innerHTML = '<span style="color:#666; font-size:13px;">No skills listed.</span>';
-        }
+        skillsContainer.innerHTML = '<span style="color:#666; font-size:13px;">No skills listed.</span>';
 
-        // 3. Fetch Stats (Async)
-        // Posts
-        db.collection('posts').where('authorId', '==', targetUserId).get().then(snap => {
-            document.getElementById('viewStatPosts').innerText = snap.size;
-        });
-        // Score (already in user doc usually, but fallback to 0)
-        document.getElementById('viewStatScore').innerText = u.score || 0;
-
-        // Connections Count
-        const sentP = db.collection('connection_requests').where('senderId', '==', targetUserId).where('status', '==', 'accepted').get();
-        const recP = db.collection('connection_requests').where('recipientId', '==', targetUserId).where('status', '==', 'accepted').get();
-        Promise.all([sentP, recP]).then(([s, r]) => {
-            document.getElementById('viewStatConnections').innerText = s.size + r.size;
-        });
+        // 3. Fake Stats for now
+        document.getElementById('viewStatPosts').innerText = "-";
+        document.getElementById('viewStatScore').innerText = "-";
+        document.getElementById('viewStatConnections').innerText = "-";
 
         // 4. DETERMINE CONNECTION STATUS (The Logic)
         const actionsDiv = document.getElementById('viewProfileActions');
+        const currentUserId = localStorage.getItem('vsync_uid') || (window.currentUser && window.currentUser.uid) || "1";
 
-        // Check Sent Request
-        const sentCheck = await db.collection('connection_requests')
-            .where('senderId', '==', currentUser.uid)
-            .where('recipientId', '==', targetUserId).get();
-
-        // Check Received Request
-        const recCheck = await db.collection('connection_requests')
-            .where('recipientId', '==', currentUser.uid)
-            .where('senderId', '==', targetUserId).get();
-
-        let html = '';
-
-        if (!sentCheck.empty) {
-            const req = sentCheck.docs[0].data();
-            if (req.status === 'pending') {
-                html = `<button class="btn btn-disabled" disabled>Requested</button> 
-                        <button class="btn btn-secondary" onclick="cancelRequest('${sentCheck.docs[0].id}')">Cancel</button>`;
-            } else if (req.status === 'accepted') {
-                html = `<button class="btn btn-primary" onclick="goToChatFromModal('${targetUserId}', '${encodeURIComponent(u.name)}')">Message</button>
-                        <button class="btn btn-danger" onclick="unfriend('${targetUserId}', '${sentCheck.docs[0].id}')">Unfriend</button>`;
-            } else {
-                // Rejected, allow retry?
-                html = `<button class="btn btn-primary" onclick="sendInstantConnectionRequest('${targetUserId}', this)">Connect</button>`;
-            }
-        }
-        else if (!recCheck.empty) {
-            const req = recCheck.docs[0].data();
-            const reqId = recCheck.docs[0].id;
-            if (req.status === 'pending') {
-                html = `<button class="btn btn-primary" onclick="updateRequest('${reqId}','accepted','${targetUserId}')">Accept</button>
-                        <button class="btn btn-danger" onclick="updateRequest('${reqId}','rejected')">Decline</button>`;
-            } else if (req.status === 'accepted') {
-                html = `<button class="btn btn-primary" onclick="goToChatFromModal('${targetUserId}', '${encodeURIComponent(u.name)}')">Message</button>
-                        <button class="btn btn-danger" onclick="unfriend('${targetUserId}', '${reqId}')">Unfriend</button>`;
-            } else {
-                html = `<button class="btn btn-primary" onclick="sendInstantConnectionRequest('${targetUserId}', this)">Connect</button>`;
-            }
-        }
-        else {
-            // No connection exists
-            html = `<button class="btn btn-primary" style="padding: 10px 30px;" onclick="sendInstantConnectionRequest('${targetUserId}', this)">Connect</button>`;
+        if (currentUserId !== targetUserId) {
+            actionsDiv.innerHTML = `<button class="btn btn-primary" style="padding: 10px 30px;" onclick="window.connectUser('${currentUserId}', '${targetUserId}', this)">Connect</button>`;
+        } else {
+            actionsDiv.innerHTML = `<button class="btn btn-secondary" style="padding: 10px 30px;" disabled>This is you</button>`;
         }
 
-        actionsDiv.innerHTML = html;
-
-    }).catch(e => console.error(e));
+    } catch (e) {
+        console.error(e);
+        if (typeof closeModal === "function") closeModal('viewProfileModal');
+    }
 }
 
 
 
 // --- CONNECTIONS MODAL ---
+window.openNetworkModal = async function(type) {
+    const container = document.getElementById('networkModalContainer');
+    if (!container) return;
+    
+    container.style.display = 'flex';
+    container.innerHTML = `
+        <div style="background: #1e1e24; padding: 24px; border-radius: 12px; width: 90%; max-width: 400px; color: white; position: relative; max-height: 80vh; display: flex; flex-direction: column;">
+            <h2 style="font-size:20px; font-weight:bold; margin-bottom:15px; text-transform:capitalize;">${type === 'discover' ? 'Discover People' : 'My Connections'}</h2>
+            <button style="position:absolute; top:15px; right:15px; background:none; border:none; color:#ccc; font-size:24px; cursor:pointer;" onclick="document.getElementById('networkModalContainer').style.display = 'none'">&times;</button>
+            <div id="networkUsersList" style="overflow-y:auto; flex:1; display:flex; flex-direction:column; gap:10px;">
+                <p style="text-align:center; color:#888;">Loading...</p>
+            </div>
+        </div>
+    `;
+
+    try {
+        const userId = localStorage.getItem('user_id') || localStorage.getItem('vsync_uid') || window.currentUser?.uid || "1";
+        const endpoint = type === 'discover' ? `/api/network/discover/${userId}` : `/api/network/connected/${userId}`;
+        const res = await fetch(`http://127.0.0.1:3000${endpoint}`);
+        const data = await res.json();
+        
+        const listEl = document.getElementById('networkUsersList');
+        if (data.users && data.users.length > 0) {
+            listEl.innerHTML = data.users.map(u => `
+                <div style="display:flex; justify-content:space-between; align-items:center; padding:12px; background:var(--bg-card); border-radius:8px; border:1px solid rgba(255,255,255,0.05);">
+                    <div style="display:flex; align-items:center; gap:10px;">
+                        <div style="width:36px; height:36px; border-radius:50%; background:#333; display:flex; align-items:center; justify-content:center; font-weight:bold; color:white;">
+                            ${(u.first_name || 'U').charAt(0).toUpperCase()}
+                        </div>
+                        <div>
+                            <p style="font-weight:bold; font-size:14px; margin:0; color:white;">${u.first_name || 'Unknown'}</p>
+                            <p style="color:#888; font-size:11px; margin:0;">${(u.role || 'Student').toUpperCase()}</p>
+                        </div>
+                    </div>
+                    ${type === 'discover' 
+                        ? `<button class="btn btn-primary btn-sm" onclick="window.connectUser('${userId}', '${u.user_id}', this)" style="padding:6px 12px; font-size:11px; border-radius:20px;">Request / Undo</button>`
+                        : (u.status === 'pending'
+                            ? `<button class="btn btn-primary btn-sm" onclick="window.acceptConnection('${u.follower_user}', '${u.following_user}')" style="padding:6px 12px; font-size:11px; border-radius:20px; background:#10b981;">Accept</button>`
+                            : `<button class="btn btn-secondary btn-sm" style="padding:6px 12px; font-size:11px; border-radius:20px;" disabled>Connected</button>`
+                          )
+                    }
+                </div>
+            `).join('');
+        } else {
+            listEl.innerHTML = `<p style="text-align:center; color:#888;">No users found.</p>`;
+        }
+    } catch(err) {
+        document.getElementById('networkUsersList').innerHTML = `<p style="text-align:center; color:#ff453a;">Failed to load.</p>`;
+    }
+};
+
+window.acceptConnection = async function(followerUser, followingUser) {
+    try {
+        const apiBase = window.location.origin.includes(':3000') ? '' : 'http://127.0.0.1:3000';
+        await fetch(`${apiBase}/api/connections/accept`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ follower_user: followerUser, following_user: followingUser })
+        });
+        window.openNetworkModal('connected');
+    } catch (e) {
+        console.error('Accept Connection Error:', e);
+    }
+};
+
+window.connectUser = async function(followerId, followingId, btnElement) {
+    if (btnElement) btnElement.disabled = true;
+    try {
+        const apiBase = window.location.origin.includes(':3000') ? '' : 'http://127.0.0.1:3000';
+        await fetch(`${apiBase}/api/connections/follow`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ follower_user: followerId, following_user: followingId })
+        });
+        if (btnElement) btnElement.disabled = false;
+    } catch (e) {
+        console.error(e);
+        if (btnElement) btnElement.disabled = false;
+    }
+};
+
 function openConnectionsModal() {
-    document.getElementById('connectionsModal').classList.add('active');
-    loadConnections();
+    const modal = document.getElementById('connectionsModal');
+    if (modal) modal.classList.add('active');
+    if (window.loadConnections) window.loadConnections();
 }
 
-
 function goToChatFromModal(userId, encodedName) {
-    // Close the connections popup
-    document.getElementById('connectionsModal').classList.remove('active');
-
-    // Decode the name back to normal
+    const modal = document.getElementById('connectionsModal');
+    if(modal) modal.classList.remove('active');
     const userName = decodeURIComponent(encodedName);
 
     // Open the chat
@@ -2526,28 +2501,37 @@ async function loadCommunity(forceRefresh = false) {
     }
 
     try {
-        const res = await fetch('http://localhost:3000/api/posts');
-        const sqlPosts = await res.json();
-        
+        const userId = localStorage.getItem('vsync_uid') || (window.currentUser && window.currentUser.uid) || "1";
+        const res = await fetch(`http://127.0.0.1:3000/api/posts?user_id=${userId}`);
+        const data = await res.json();
+        const sqlPosts = data.posts;
+
         if (!Array.isArray(sqlPosts)) {
-            console.error("Failed to load posts from API:", sqlPosts);
+            console.error("Failed to load posts from API:", data);
             listEl.innerHTML = '<p style="text-align:center;color:var(--danger-color);">Error loading community posts.</p>';
             return;
         }
 
+        if (sqlPosts.length === 0) {
+            listEl.innerHTML = '<p style="text-align:center; color:var(--text-secondary); margin-top:30px;">No posts yet. Be the first to post!</p>';
+            return;
+        }
+
         let posts = sqlPosts.map(post => ({
-            id: post.id,
+            id: post.post_id,
             title: post.title,
             body: post.content,
             createdAt: new Date(post.created_at),
-            authorName: post.username,
-            authorId: "1", // Simplified
+            authorName: post.first_name || "Unknown",
+            authorId: post.author_id,
             authorRole: "Student",
             authorYear: "3",
             authorPic: "",
             isAnonymous: false,
-            upvotes: post.upvotes,
-            upvoters: new Array(post.upvotes).fill('dummy'),
+            upvotes: post.upvotes || 0,
+            downvotes: post.downvotes || 0,
+            user_vote: post.user_vote || 0,
+            upvoters: new Array(post.upvote_count || 0).fill('dummy'),
             reports: [],
             tags: []
         }));
@@ -2572,7 +2556,7 @@ async function loadCommunity(forceRefresh = false) {
             listEl.innerHTML = `<p style="text-align:center; color:var(--text-secondary); margin-top:30px;">No posts found.</p>`;
             return;
         }
-        
+
         if (typeof loadStories === 'function') loadStories();
 
         const htmlPromises = posts.map(async p => {
@@ -2584,7 +2568,7 @@ async function loadCommunity(forceRefresh = false) {
             const myData = window.currentUserData || {};
 
             const displayPic = isAuthor && !myData.isAnonymousSession ? (myData.profilePic || "") : (p.authorPic || "");
-            const displayName = isAuthor && !myData.isAnonymousSession ? myData.name : p.authorName;
+            const displayName = isAuthor && !myData.isAnonymousSession ? (myData.name || myData.first_name || p.authorName || "Unknown") : (p.authorName || "Unknown");
             const displayRole = isAuthor && !myData.isAnonymousSession ? (myData.role || "Student") : (p.authorRole || "Student");
             const displayYear = isAuthor && !myData.isAnonymousSession ? (myData.year || "") : (p.authorYear || "");
 
@@ -2653,7 +2637,7 @@ async function loadCommunity(forceRefresh = false) {
             // --- POST AVATAR ---
             let avatarHtml = displayPic && displayName !== "Anonymous"
                 ? `<img src="${displayPic}" loading="lazy" class="post-avatar-small">`
-                : `<div class="post-avatar-small" style="background:#333; display:flex; align-items:center; justify-content:center; color:#ccc; font-weight:bold;">${displayName.charAt(0)}</div>`;
+                : `<div class="post-avatar-small" style="background:#333; display:flex; align-items:center; justify-content:center; color:#ccc; font-weight:bold;">${(displayName || "U").charAt(0)}</div>`;
 
             // --- TOP COMMENT ---
             let topCommentHtml = '';
@@ -2703,8 +2687,7 @@ async function loadCommunity(forceRefresh = false) {
                     <div class="post-options-wrapper">
                         <div class="three-dots-btn" onclick="togglePostMenu(event, '${p.id}')">⋮</div>
                         <div id="menu-${p.id}" class="options-menu">
-                            <div class="menu-item danger" onclick="reportPost(event, '${p.id}')">Report</div>
-                            ${isAuthor ? `<div class="menu-item danger" onclick="deletePost('${p.id}')">Delete</div>` : ''}
+                            ${String(p.authorId) === String(localStorage.getItem('vsync_uid') || window.currentUser?.uid || "1") ? `<div class="menu-item danger" onclick="deletePost('${p.id}')">Delete</div>` : ''}
                         </div>
                     </div>
 
@@ -2738,11 +2721,6 @@ async function loadCommunity(forceRefresh = false) {
                                 </svg>
                             </button>
 
-                            <button class="btn btn-secondary ${bookmarkClass}" onclick="toggleBookmark(event, '${p.id}')" style="padding: 8px 12px; min-width: 40px; color: ${isBookmarked ? '#FFD700' : 'var(--text-secondary)'}; display: flex; align-items: center; justify-content: center;">
-                                <svg width="22" height="22" viewBox="0 0 24 24" fill="${bookmarkFill}" stroke="${bookmarkColor}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                    <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"></path>
-                                </svg>
-                            </button>
 
                         </div>
 
@@ -2755,11 +2733,15 @@ async function loadCommunity(forceRefresh = false) {
                                 Comment
                             </button>
 
-                            <button class="btn ${currentUser && (p.upvoters || []).includes(currentUser.uid) ? 'btn-primary' : 'btn-secondary'}" 
-                                    onclick="handleUpvote(event, '${p.id}')" 
+                            <button class="btn ${p.user_vote === 1 ? 'btn-primary' : 'btn-secondary'}" 
+                                    onclick="handleVote('${p.id}', 1)" 
                                     style="display: flex; align-items: center; gap: 6px;">
-                                <span>↑</span> 
-                                <span>${p.upvotes || 0}</span>
+                                <span>↑</span> <span>${p.upvotes || 0}</span>
+                            </button>
+                            <button class="btn ${p.user_vote === -1 ? 'btn-primary' : 'btn-secondary'}" 
+                                    onclick="handleVote('${p.id}', -1)" 
+                                    style="display: flex; align-items: center; gap: 6px;">
+                                <span>↓</span> <span>${p.downvotes || 0}</span>
                             </button>
 
                         </div>
@@ -2818,14 +2800,14 @@ function openEditEvent(eventId) {
     document.getElementById('editEventId').value = eventId;
     document.getElementById('editEventTitle').value = event.Title || '';
     document.getElementById('editEventDesc').value = event.Description || '';
-    
+
     // Handle Date (Convert "Oct 24, 2025" or Timestamp to "YYYY-MM-DD" for input)
     // If your data is already "YYYY-MM-DD", just use it. Otherwise, simple check:
     let dateVal = event.Date || '';
-    if(dateVal && !dateVal.includes('-')) {
+    if (dateVal && !dateVal.includes('-')) {
         // Try to parse if it's not in ISO format
         const d = new Date(dateVal);
-        if(!isNaN(d)) dateVal = d.toISOString().split('T')[0];
+        if (!isNaN(d)) dateVal = d.toISOString().split('T')[0];
     }
     document.getElementById('editEventDate').value = dateVal;
 
@@ -2835,7 +2817,7 @@ function openEditEvent(eventId) {
 
     // Clear previous "New File" inputs
     const fileInput = document.getElementById('editEventNewFiles');
-    if(fileInput) fileInput.value = "";
+    if (fileInput) fileInput.value = "";
     document.getElementById('editEventNewPreview').innerHTML = "";
 
     // Show Images
@@ -2843,7 +2825,7 @@ function openEditEvent(eventId) {
 
     // Show Modal
     const modal = document.getElementById('editEventModal');
-    if(modal) modal.classList.add('active');
+    if (modal) modal.classList.add('active');
 }
 
 // 2. RENDER EXISTING IMAGE THUMBNAILS
@@ -2861,7 +2843,7 @@ function renderEditImages() {
     editEventState.currentImages.forEach((url, index) => {
         const div = document.createElement('div');
         div.style.cssText = "position: relative; width: 70px; height: 70px; border-radius: 8px; overflow: hidden; border:1px solid #333;";
-        
+
         div.innerHTML = `
             <img src="${url}" style="width: 100%; height: 100%; object-fit: cover;">
             <div onclick="removeEventImage(${index})" 
@@ -2885,7 +2867,7 @@ function removeEventImage(index) {
 function previewEditEventNewImages(input) {
     const preview = document.getElementById('editEventNewPreview');
     preview.innerHTML = '';
-    
+
     if (input.files && input.files.length > 0) {
         Array.from(input.files).forEach(file => {
             const url = URL.createObjectURL(file);
@@ -2897,65 +2879,33 @@ function previewEditEventNewImages(input) {
 // 5. SAVE CHANGES TO FIRESTORE
 
 /* --- HANDLE UPVOTE (Fixed: Preserves Layout) --- */
-function handleUpvote(event, postId) {
-    triggerHaptic();
-    event.stopPropagation(); // Stop clicking the post behind the button
-    
-    if (!currentUser) {
-        showToast("Please login to vote");
+window.handleVote = async function(postId, voteValue) {
+    if (typeof triggerHaptic === "function") triggerHaptic();
+
+    if (!window.currentUser) {
+        if (typeof showToast === "function") showToast("Please login to vote");
         return;
     }
-
-    const btn = event.currentTarget; // The button you clicked
-    const isUpvoted = btn.classList.contains('btn-primary'); // Blue = already upvoted
     
-    // 1. Get current number safely
-    // We look for the second <span> because that holds the number now
-    let countSpan = btn.querySelector('span:last-child');
-    let currentCount = parseInt(countSpan ? countSpan.innerText : (btn.innerText.replace('↑', '').trim() || "0"));
+    const userId = localStorage.getItem('vsync_uid') || window.currentUser.uid || window.currentUser.id;
 
-    // 2. Optimistic UI Update (Change look instantly)
-    if (isUpvoted) {
-        // Remove Vote
-        currentCount = Math.max(0, currentCount - 1);
-        btn.classList.remove('btn-primary');
-        btn.classList.add('btn-secondary');
+    try {
+        const response = await fetch('http://127.0.0.1:3000/api/vote', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ user_id: userId, post_id: postId, vote_value: voteValue })
+        });
         
-        // Remove ID from local tracker
-        if (window.currentUserData && window.currentUserData.upvotedPosts) {
-             window.currentUserData.upvotedPosts = window.currentUserData.upvotedPosts.filter(id => id !== postId);
+        if (response.ok) {
+            if (typeof loadCommunity === "function") loadCommunity(true); 
+        } else {
+            if (typeof showToast === "function") showToast("Vote failed");
         }
-    } else {
-        // Add Vote
-        currentCount++;
-        btn.classList.remove('btn-secondary');
-        btn.classList.add('btn-primary');
-        triggerHaptic(); // Nice vibration
-        
-        // Add ID to local tracker
-        if (window.currentUserData) {
-            if (!window.currentUserData.upvotedPosts) window.currentUserData.upvotedPosts = [];
-            window.currentUserData.upvotedPosts.push(postId);
-        }
+    } catch (e) {
+        console.error(e);
+        if (typeof showToast === "function") showToast("Error voting");
     }
-
-    // 3. RE-RENDER HTML CORRECTLY (Preserve the Spans!)
-    btn.innerHTML = `<span>↑</span> <span>${currentCount}</span>`;
-
-    // 4. Send to Database
-    const docRef = db.collection('posts').doc(postId);
-    if (isUpvoted) {
-        docRef.update({
-            upvotes: firebase.firestore.FieldValue.increment(-1),
-            upvoters: firebase.firestore.FieldValue.arrayRemove(currentUser.uid)
-        }).catch(err => console.error(err));
-    } else {
-        docRef.update({
-            upvotes: firebase.firestore.FieldValue.increment(1),
-            upvoters: firebase.firestore.FieldValue.arrayUnion(currentUser.uid)
-        }).catch(err => console.error(err));
-    }
-}
+};
 
 function openSortModal() {
     lockScroll();
@@ -3325,16 +3275,30 @@ window.handleCreatePostSubmit = async function (e) {
         const isAnon = window.currentUserData.isAnonymousSession;
         const currentYear = isAnon ? window.currentUserData.realYear : window.currentUserData.year;
 
-        const res = await fetch('http://localhost:3000/api/posts', {
+        const tagToId = {
+            "Technical": 1,
+            "Academic": 2,
+            "Career": 3,
+            "Events": 4,
+            "General": 5,
+            "Project": 6,
+            "Question": 7,
+            "Announcement": 8,
+            "Social": 9
+        };
+        const categoryId = (finalTags[0] && tagToId[finalTags[0].name]) || 1;
+
+        const res = await fetch('http://127.0.0.1:3000/api/posts', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                user_id: 1, // Simulated current user for migration
+                author_id: localStorage.getItem('vsync_uid') || window.currentUser?.uid || "1", 
                 title: title,
-                content: body
+                content: body,
+                category_id: categoryId
             })
         });
-        
+
         if (!res.ok) throw new Error("Failed to create post");
 
         console.log("Post saved successfully!");
@@ -3346,7 +3310,7 @@ window.handleCreatePostSubmit = async function (e) {
         if (window.removePostImage) window.removePostImage();
         window.selectedTags = [];
         if (window.renderTagsOnMainForm) window.renderTagsOnMainForm();
-        if (window.loadCommunity) window.loadCommunity();
+        if (window.loadCommunity) window.loadCommunity(true);
 
         submitBtn.disabled = false;
         submitBtn.innerText = "Post";
@@ -3365,7 +3329,13 @@ function deletePost(postId) {
         "This post will be permanently removed from the community.",
         () => {
             // 1. Delete from Database
-            db.collection('posts').doc(postId).delete().then(() => {
+            const currentUserId = localStorage.getItem('vsync_uid') || window.currentUser?.uid || "1";
+            fetch(`http://127.0.0.1:3000/api/posts/${postId}?user_id=${currentUserId}`, {
+                method: 'DELETE'
+            }).then(res => res.json()).then(data => {
+                if (!data.success) throw new Error("Failed to delete post");
+                if (typeof showToast === "function") showToast("Post deleted.");
+                if (typeof loadCommunity === "function") loadCommunity(true);
                 showToast("Post deleted.");
 
                 // 2. IMMEDIATE UI UPDATE: Remove the card from the screen
@@ -3395,27 +3365,36 @@ function deletePost(postId) {
     );
 }
 
-function viewPost(id) {
+window.viewPost = async function(id) {
     document.getElementById('currentPostId').value = id;
-    db.collection('posts').doc(id).get().then(doc => {
-        const p = doc.data();
+    const titleEl = document.getElementById('postDetailTitle');
+    const bodyEl = document.getElementById('postDetailBody');
+    if (titleEl) titleEl.textContent = "Discussion";
+    if (bodyEl) bodyEl.innerHTML = "";
+    document.getElementById('postDetailModal').classList.add('active');
 
-        // --- NEW: Auto-Linkify for Modal View ---
-        const processedBody = p.body.replace(/(https?:\/\/[^\s]+)/g, (url) => {
-            return `<a href="${url}" target="_blank" style="color:var(--primary-color); text-decoration:underline;">${url}</a>`;
-        });
+    const list = document.getElementById('commentsList');
+    if (list) list.innerHTML = '<p style="color:var(--text-secondary);">Loading comments...</p>';
 
-        document.getElementById('postDetailTitle').textContent = p.title;
-        // Use processedBody here
-        document.getElementById('postDetailBody').innerHTML = `
-            <p style="white-space: pre-wrap;">${processedBody}</p>
-            ${p.linkUrl ? `<a href="${p.linkUrl}" target="_blank" class="post-link" style="margin-top:10px; display:inline-block;">🔗 ${p.linkUrl}</a>` : ''}
-            <small style="color: #666; display:block; margin-top:10px;">By ${p.authorName}</small>
-        `;
-
-        loadComments(id);
-        document.getElementById('postDetailModal').classList.add('active');
-    });
+    try {
+        const res = await fetch('http://127.0.0.1:3000/api/comments/' + id);
+        const data = await res.json();
+        
+        if (data.success && data.comments && data.comments.length > 0) {
+            list.innerHTML = data.comments.map(c => `
+                <div style="padding:15px; border-bottom:1px solid rgba(255,255,255,0.05); margin-bottom:10px;">
+                    <strong style="color:var(--primary-color)">${c.first_name}</strong>
+                    <span style="color:var(--text-secondary); font-size:12px;"> • ${new Date(c.created_at).toLocaleDateString()}</span>
+                    <p style="margin-top:8px; font-size:14px; color:var(--text-main);">${c.content}</p>
+                </div>
+            `).join('');
+        } else {
+            list.innerHTML = '<p style="text-align:center; color:var(--text-secondary); padding: 20px;">No comments yet. Be the first!</p>';
+        }
+    } catch (e) {
+        console.error(e);
+        if (list) list.innerHTML = '<p style="color:var(--danger-color);">Error loading comments.</p>';
+    }
 }
 
 function loadComments(postId) {
@@ -4138,7 +4117,7 @@ function renderEventsList() {
     const listEl = document.getElementById('eventsList');
     // Ensure we have data
     if (!window.allEventsCache) return;
-    
+
     let events = [...window.allEventsCache]; // Copy array
 
     // A. FILTERING
@@ -4158,9 +4137,9 @@ function renderEventsList() {
 
     // B. SORTING
     if (window.currentEventSort === 'soon') {
-        events.sort((a, b) => a.timestamp - b.timestamp); 
+        events.sort((a, b) => a.timestamp - b.timestamp);
     } else {
-        events.sort((a, b) => b.timestamp - a.timestamp); 
+        events.sort((a, b) => b.timestamp - a.timestamp);
     }
 
     // C. HTML GENERATION
@@ -4267,7 +4246,7 @@ function updateEventFilterUI() {
 async function upvote(id) {
     if (!currentUser) return alert("You must be logged in to upvote.");
     try {
-        const res = await fetch('http://localhost:3000/api/upvotes/toggle', {
+        const res = await fetch('http://127.0.0.1:3000/api/upvotes/toggle', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ post_id: id, user_id: 1 }) // Simplified static user ID for migration since full auth is mocked
@@ -4287,22 +4266,22 @@ function loadProfile() {
     // 1. SAFETY CHECK
     if (!currentUser) return;
     let adminBtnHtml = '';
-if (currentUser && typeof ADMIN_UIDS !== 'undefined' && ADMIN_UIDS.includes(currentUser.uid)) {
-    adminBtnHtml = `
+    if (currentUser && typeof ADMIN_UIDS !== 'undefined' && ADMIN_UIDS.includes(currentUser.uid)) {
+        adminBtnHtml = `
     <button class="btn-new" onclick="openAdminPanel()" 
         style="grid-column: 1 / -1; background: rgba(255, 69, 58, 0.15); color: #ff453a; border: 1px solid #ff453a; margin-top: 10px;">
         👮‍♂️ Admin Dashboard
     </button>`;
-}
-const actionContainer = document.getElementById('profileActionButtons');
-if (actionContainer) {
-    actionContainer.innerHTML = `
+    }
+    const actionContainer = document.getElementById('profileActionButtons');
+    if (actionContainer) {
+        actionContainer.innerHTML = `
         <button class="btn-new btn-primary-new" onclick="toggleEditMode()">Edit</button>
         <button class="btn-new btn-secondary-new" onclick="openSavedPosts()">Saved</button>
         <button class="btn-new btn-secondary-new" onclick="shareProfile()">Share</button>
         ${adminBtnHtml}
     `;
-}
+    }
 
     // 2. ANONYMOUS CHECK
     if (window.currentUserData && window.currentUserData.isAnonymousSession) {
@@ -4331,86 +4310,78 @@ if (actionContainer) {
     }
 
     // 3. STANDARD USER LOGIC
-    db.collection('users').doc(currentUser.uid).get().then(doc => {
-        const dbData = doc.exists ? doc.data() : {};
-        const data = { ...currentUserData, ...dbData };
+    fetch(`http://127.0.0.1:3000/api/users/${localStorage.getItem('vsync_uid') || currentUser.uid || currentUser.id}`)
+        .then(res => res.json())
+        .then(dataResponse => {
+            if (!dataResponse.success) throw new Error("Profile fetch failed");
+            const dbData = dataResponse.profile || {};
+            const data = { ...window.currentUserData, ...dbData };
 
-        const rawName = data.name || "User";
-        const displayName = rawName.charAt(0).toUpperCase() + rawName.slice(1);
+            const rawName = data.first_name || data.name || "User";
+            const displayName = rawName.charAt(0).toUpperCase() + rawName.slice(1);
 
-        // Update Name
-        const nameEl = document.getElementById('profileName');
-        if (data.role === 'mentor' && data.isVerified) {
-            nameEl.innerHTML = `${displayName} <span style="color:#30D158; font-size:0.8em; vertical-align: middle;">✔</span>`;
-        } else {
-            nameEl.textContent = displayName;
-        }
-
-        // Update Badge
-        const badgeEl = document.getElementById('profileBadge');
-        let badgeText = (data.role || 'student').toUpperCase();
-        let badgeColor = 'var(--primary-color)';
-        if (data.role === 'mentor') {
-            if (data.isVerified) { badgeText = "VERIFIED MENTOR"; badgeColor = "#30D158"; }
-            else { badgeText = "MENTOR"; badgeColor = "#636366"; }
-        }
-        badgeEl.textContent = badgeText;
-        badgeEl.style.background = badgeColor;
-
-        // --- FIXED: SIMPLE PROFILE PICTURE ---
-        const wrapper = document.querySelector('.profile-pic-wrapper-new');
-        if (wrapper) {
-            // Remove click events, make it static
-            wrapper.onclick = null;
-
-            const picUrl = data.profilePic;
-            if (picUrl) {
-                wrapper.innerHTML = `<img src="${picUrl}";loading="lazy"; class="profile-pic-large-new">`;
+            // Update Name
+            const nameEl = document.getElementById('profileName');
+            if (data.role === 'mentor' && data.isVerified) {
+                nameEl.innerHTML = `${displayName} <span style="color:#30D158; font-size:0.8em; vertical-align: middle;">✔</span>`;
             } else {
-                const initial = displayName.charAt(0).toUpperCase();
-                wrapper.innerHTML = `<div class="profile-initial-large-new">${initial}</div>`;
+                nameEl.textContent = displayName;
             }
-        }
-        // -------------------------------------
 
-        // Skills
-        const skillsContainer = document.getElementById('skillsContainer');
-        if (data.skills && data.skills.length > 0) {
-            skillsContainer.innerHTML = data.skills.map(skill => `<div class="skill-tag-new">${skill}</div>`).join('');
-        } else {
-            skillsContainer.innerHTML = '<div class="empty-state-new">No skills added yet. Click Edit Profile to add your expertise.</div>';
-        }
+            // Update Badge
+            const badgeEl = document.getElementById('profileBadge');
+            let badgeText = (data.role || 'student').toUpperCase();
+            let badgeColor = 'var(--primary-color)';
+            if (data.role === 'mentor') {
+                if (data.isVerified) { badgeText = "VERIFIED MENTOR"; badgeColor = "#30D158"; }
+                else { badgeText = "MENTOR"; badgeColor = "#636366"; }
+            }
+            badgeEl.textContent = badgeText;
+            badgeEl.style.background = badgeColor;
 
-        // Info Section
-        document.getElementById('profileEmail').textContent = data.email || 'email@example.com';
-        document.getElementById('infoCollege').textContent = data.college || 'Not specified';
+            // --- FIXED: HYDRATION FORCE ---
+            const topNav = document.getElementById('topNavInitial');
+            if (topNav) topNav.textContent = data.first_name ? data.first_name.charAt(0).toUpperCase() : 'U';
+            
+            const emailEl = document.getElementById('profileEmail');
+            if (emailEl) emailEl.textContent = data.email || '';
+            
+            const yearEl = document.getElementById('profileYear');
+            if (yearEl) yearEl.textContent = data.current_year || 'Not specified';
+            
+            const dateEl = document.getElementById('profileDate');
+            if (dateEl && data.created_at) dateEl.textContent = new Date(data.created_at).toLocaleDateString();
+            
+            const expEl = document.getElementById('profileExperience');
+            if (expEl) expEl.textContent = data.work_experience || 'No experience added.';
+            
+            const avatarBox = document.getElementById('profileAvatarBox');
+            if (avatarBox) {
+                if (data.profile_picture && data.profile_picture !== 'null') {
+                    avatarBox.innerHTML = `<img src="${data.profile_picture}" style="width:100px;height:100px;border-radius:50%;object-fit:cover;margin:0 auto;">`;
+                } else {
+                    avatarBox.innerHTML = `<div class="profile-initial-large-new">${data.first_name ? data.first_name.charAt(0).toUpperCase() : '?'}</div>`;
+                }
+            }
 
-        const yearContainer = document.getElementById('infoYear');
-        yearContainer.innerHTML = '';
-        if (data.year && ['FE', 'SE', 'TE', 'BE'].includes(data.year)) {
-            if (typeof getYearBadgeHtml === 'function') yearContainer.innerHTML = getYearBadgeHtml(data.year);
-            else yearContainer.textContent = data.year;
-        } else {
-            yearContainer.textContent = data.year || 'Not specified';
-        }
+            // Populate Edit Form
+            const editNameEl = document.getElementById('editName');
+            if(editNameEl) editNameEl.value = data.first_name || data.name || '';
+            
+            const editCollegeEl = document.getElementById('editCollege');
+            if(editCollegeEl) editCollegeEl.value = data.college || '';
+            
+            const editYearEl = document.getElementById('editYear');
+            if(editYearEl) editYearEl.value = data.current_year || data.year || 'FE';
+            
+            const editSkillsEl = document.getElementById('editSkills');
+            if(editSkillsEl) editSkillsEl.value = (data.skills || []).join(', ');
 
-        document.getElementById('infoRole').textContent = data.role ? data.role.charAt(0).toUpperCase() + data.role.slice(1) : 'Not specified';
-
-        if (data.joinedDate) {
-            const dateObj = data.joinedDate.toDate ? data.joinedDate.toDate() : new Date(data.joinedDate);
-            document.getElementById('infoJoined').textContent = dateObj.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
-        }
-
-        // Populate Edit Form
-        document.getElementById('editName').value = data.name || '';
-        document.getElementById('editCollege').value = data.college || '';
-        document.getElementById('editYear').value = data.year || 'FE';
-        document.getElementById('editSkills').value = (data.skills || []).join(', ');
-
-    }).catch(e => {
-        console.error("Profile load error:", e);
-        document.getElementById('profileName').textContent = 'Error loading profile';
-    });
+        }).catch(e => {
+            console.error("Profile load error:", e);
+            const nameEl = document.getElementById('profileName');
+            if (nameEl) nameEl.textContent = 'Error loading profile';
+        });
 
     // Refresh Stats
     if (typeof updateProfileStats === 'function') updateProfileStats();
@@ -4563,7 +4534,7 @@ function triggerHaptic() {
     // 2. FORCE VIBRATION (50ms is a solid "tick")
     // Using an array [50] helps bypass some browser restrictions
     const success = window.navigator.vibrate([50]);
-    
+
     // Debug log to console (Connect phone to PC to see this if needed)
     console.log("Haptic triggered:", success);
 }
@@ -4958,21 +4929,20 @@ window.handleNewComment = function (e, parentId = null) {
     const postId = document.getElementById('currentPostId').value;
     const uData = window.currentUserData;
 
-    // Save to Firestore with parentId field
-    db.collection('posts').doc(postId).collection('comments').add({
-        text: text,
-        authorId: window.currentUser.uid,
-        authorName: uData.name,
-        authorPic: uData.profilePic || "",
-        authorRole: uData.role || "Student",
-        authorYear: uData.year || "",
-        timestamp: new Date(),
-        upvotes: 0,
-        upvoters: [],
-        parentId: parentId // Null for root, ID for child
-    }).then(() => {
-        document.getElementById(inputId).value = "";
-        if (window.loadComments) window.loadComments(postId);
+    // Save to MySQL
+    const authorId = localStorage.getItem('vsync_uid') || (window.currentUser && window.currentUser.uid) || "1";
+
+    fetch('http://127.0.0.1:3000/api/comments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ post_id: postId, author_id: authorId, content: text })
+    }).then(res => res.json()).then(data => {
+        if (data.success) {
+            document.getElementById(inputId).value = "";
+            if (window.viewPost) window.viewPost(postId);
+        } else {
+            if (typeof showToast === "function") showToast("Failed to post comment");
+        }
     }).catch(err => console.error(err));
 };
 /* --- SCORE HELPER --- */
@@ -5037,9 +5007,10 @@ function loadLeaderboard() {
     }
 
     // 3. FETCH DATA FROM SQL
-    fetch('http://localhost:3000/api/leaderboard')
+    fetch('http://127.0.0.1:3000/api/leaderboard')
         .then(res => res.json())
-        .then(sqlUsers => {
+        .then(data => {
+            const sqlUsers = data.leaderboard;
             if (!sqlUsers || sqlUsers.length === 0) {
                 listEl.innerHTML = '<p style="text-align:center;">No mentors found yet.</p>';
                 return;
@@ -5051,8 +5022,8 @@ function loadLeaderboard() {
             sqlUsers.forEach(row => {
                 // Map SQL row to frontend's expected user object
                 const u = {
-                    name: row.username,
-                    score: row.score,
+                    name: row.first_name,
+                    score: row.total_score,
                     profilePic: "",
                     skills: ["SQL Data"],
                     college: "Migrated",
@@ -5736,26 +5707,26 @@ let deferredPrompt;
 window.addEventListener('beforeinstallprompt', (e) => {
     // 1. Prevent the mini-infobar from appearing on mobile
     e.preventDefault();
-    
+
     // 2. Stash the event so it can be triggered later
     deferredPrompt = e;
-    
+
     // 3. Show your custom "Install App" button
     const installBtn = document.getElementById('pwaInstallBtn');
     if (installBtn) {
         installBtn.style.display = 'block';
-        
+
         installBtn.addEventListener('click', async () => {
             // Hide the button immediately
             installBtn.style.display = 'none';
-            
+
             // Show the native install prompt
             deferredPrompt.prompt();
-            
+
             // Wait for the user to respond to the prompt
             const { outcome } = await deferredPrompt.userChoice;
             console.log(`User response to the install prompt: ${outcome}`);
-            
+
             // We've used the prompt, and can't use it again, discard it
             deferredPrompt = null;
         });
@@ -5768,4 +5739,17 @@ window.addEventListener('appinstalled', () => {
     // Hide the button if it's still visible
     const installBtn = document.getElementById('pwaInstallBtn');
     if (installBtn) installBtn.style.display = 'none';
+});
+
+window.addEventListener('DOMContentLoaded', () => {
+    const topNav = document.getElementById('topNavInitial');
+    if (topNav) {
+        topNav.addEventListener('click', () => {
+            if (typeof window.forceLoadProfile === 'function') window.forceLoadProfile();
+        });
+    }
+    const shareBtn = document.getElementById('shareBtn');
+    if (shareBtn && typeof shareProfile === 'function') {
+        shareBtn.addEventListener('click', shareProfile);
+    }
 });

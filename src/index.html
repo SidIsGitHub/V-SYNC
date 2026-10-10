@@ -93,17 +93,7 @@
                             </div>
                         </div>
 
-                        <div class="anon-toggle-wrapper">
-                            <label class="switch">
-                                <input type="checkbox" id="loginAnon">
-                                <span class="slider"></span>
-                            </label>
-                            <div>
-                                <span style="font-weight: 700; color: white;">Login as an Anonymous user</span>
-                                <div style="font-size: 11px; color: var(--text-secondary);">Mask identity, read & post
-                                    only.</div>
-                            </div>
-                        </div>
+
                         <div style="text-align: right; margin-bottom: 15px;">
                             <span style="color: var(--primary-color); font-size: 15px; cursor: pointer;"
                                 onclick="openForgotModal()">Forgot Password?</span>
@@ -120,17 +110,7 @@
                     <h3 style="margin-bottom: 15px; color: var(--text-main); font-size: 20px;">Create Account</h3>
                     <div class="auth-scroll-container">
                         <form onsubmit="handleRegister(event)">
-                            <div class="anon-toggle-wrapper">
-                                <label class="switch">
-                                    <input type="checkbox" id="regAnon">
-                                    <span class="slider"></span>
-                                </label>
-                                <div>
-                                    <span style="font-weight: 700; color: white;">Register as Anonymous user</span>
-                                    <div style="font-size: 11px; color: var(--text-secondary);">We see your data, but
-                                        the public won't.</div>
-                                </div>
-                            </div>
+
                             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
                                 <div class="form-group">
                                     <label>First Name</label>
@@ -159,19 +139,7 @@
                                         </svg>
                                     </div>
                                 </div>
-                            </div>
-                    </div>
-
-                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
-                        <div class="form-group"><label>Age</label><input type="number" id="regAge" required min="16"
-                                max="99"></div>
-                        <div class="form-group"><label>Gender</label><select id="regGender" required
-                                style="width: 100%; padding: 14px; background: var(--bg-input); border: 1px solid var(--border-color); color: white; border-radius: 12px;">
-                                <option value="Male">Male</option>
-                                <option value="Female">Female</option>
-                            </select></div>
-                    </div>
-                    <div class="form-group">
+                            </div>                    <div class="form-group">
                         <label>Current Year</label>
                         <select id="regYear" required onchange="validateRoleOptions()"
                             style="width: 100%; padding: 14px; background: var(--bg-input); border: 1px solid var(--border-color); color: white; border-radius: 12px;">
@@ -182,24 +150,7 @@
                             <option value="BE">Fourth Year (BE)</option>
                         </select>
                     </div>
-                    <div class="form-group">
-                        <label>I am a...</label>
-                        <select id="regRole" required
-                            style="width: 100%; padding: 14px; background: var(--bg-input); border: 1px solid var(--border-color); color: white; border-radius: 12px; font-family: inherit;">
-                            <option value="student" selected>Student</option>
-                            <option value="mentor">Mentor</option>
-                        </select>
-                    </div>
-                    <div class="form-group">
-                        <label>College / University</label>
-                        <select id="regCollege" required
-                            style="width: 100%; padding: 14px; background: var(--bg-input); border: 1px solid var(--border-color); color: white; border-radius: 12px; font-family: inherit;">
-                            <option value="" disabled selected>Select College</option>
-                            <option value="VIT">Vidyalankar Institute of Technology</option>
-                            <option value="VSIT">Vidyalankar School of Information Technology</option>
-                            <option value="VP">Vidyalankar Polytechnic</option>
-                        </select>
-                    </div>
+
 
                     <div class="form-group">
                         <label>Profile Picture (Optional)</label>
@@ -240,7 +191,7 @@
                 </div>
                 <div class="navbar-right">
                     <div style="display: flex; gap: 15px; align-items: center;">
-                        <div class="requests-icon-style" onclick="openConnectionsModal()" title="My Connections">
+                        <div class="requests-icon-style" onclick="openNetworkModal('discover')" title="Discover People">
                             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                 <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
@@ -249,7 +200,7 @@
                                 <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
                             </svg>
                         </div>
-                        <div class="requests-icon-style" onclick="switchTab('requests')" title="Pending Requests"
+                        <div class="requests-icon-style" onclick="openNetworkModal('connected')" title="My Connections"
                             style="position: relative;">
                             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -259,7 +210,7 @@
                             </svg>
                             <span id="requestBadge" class="notification-badge hidden">0</span>
                         </div>
-                        <div id="navProfileContainer" class="profile-circle" onclick="switchTab('profile')"
+                        <div id="topNavInitial" class="profile-circle" onclick="switchTab('profile'); if(window.forceLoadProfile) window.forceLoadProfile();"
                             title="My Profile"></div>
                     </div>
                 </div>
@@ -348,15 +299,6 @@
                             </div>
                         </div>
 
-                        <div class="daily-poll-style" onclick="openDailyPoll()">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round"
-                                stroke-linejoin="round">
-                                <line x1="18" y1="20" x2="18" y2="10"></line>
-                                <line x1="12" y1="20" x2="12" y2="4"></line>
-                                <line x1="6" y1="20" x2="6" y2="14"></line>
-                            </svg>
-                            <span>Daily Poll</span>
-                        </div>
                     </div>
 
                     <div id="communityPostsList" style="padding: 0 5px; margin-top: 10px;"></div>
@@ -546,7 +488,7 @@
                     <!-- PROFILE HEADER -->
                     <div class="profile-header-new">
                         <div class="profile-pic-wrapper-new">
-                            <div id="profilePicContainer"></div>
+                            <div id="profileAvatarBox">Loading...</div>
                         </div>
                         <div class="profile-info-new">
                             <h1 id="profileName">Loading...</h1>
@@ -556,7 +498,7 @@
                     </div>
 
                     <!-- STATS SECTION -->
-                    <div class="stats-grid-new">
+                    <div style="display: flex; justify-content: center; gap: 1rem; width: 100%;">
                         <div class="stat-card-new">
                             <div class="stat-number-new" id="statConnections">0</div>
                             <div class="stat-label-new">Connections</div>
@@ -565,17 +507,13 @@
                             <div class="stat-number-new" id="statPosts">0</div>
                             <div class="stat-label-new">Posts</div>
                         </div>
-                        <div class="stat-card-new">
-                            <div class="stat-number-new" id="statMentors">0</div>
-                            <div class="stat-label-new">Mentors</div>
-                        </div>
                     </div>
 
                     <!-- SKILLS SECTION -->
                     <div>
-                        <h2 class="section-title-new">Skills & Expertise</h2>
+                        <h2 class="section-title-new">Work Experience</h2>
                         <div id="skillsContainer" class="skills-container-new">
-                            <div class="empty-state-new">No skills added yet. Click Edit Profile to add your expertise.
+                            <div class="empty-state-new" id="profileExperience">No skills added yet. Click Edit Profile to add your expertise.
                             </div>
                         </div>
                     </div>
@@ -584,28 +522,16 @@
                     <div class="about-section-new">
                         <h2 class="section-title-new">Profile Information</h2>
                         <div class="info-row-new">
-                            <span class="info-label-new">College</span>
-                            <span class="info-value-new" id="infoCollege">Not specified</span>
-                        </div>
-                        <div class="info-row-new">
                             <span class="info-label-new">Current Year</span>
-                            <span class="info-value-new" id="infoYear">Not specified</span>
-                        </div>
-                        <div class="info-row-new">
-                            <span class="info-label-new">Role</span>
-                            <span class="info-value-new" id="infoRole">Not specified</span>
+                            <span class="info-value-new" id="profileYear">Not specified</span>
                         </div>
                         <div class="info-row-new">
                             <span class="info-label-new">Member Since</span>
-                            <span class="info-value-new" id="infoJoined">Recently</span>
+                            <span class="info-value-new" id="profileDate">Recently</span>
                         </div>
                     </div>
 
-                    <div class="action-buttons-new" style="grid-template-columns: 1fr 1fr 1fr; gap: 10px;">
-                        <button class="btn-new btn-primary-new" onclick="toggleEditMode()">Edit</button>
-                        <button class="btn-new btn-secondary-new" onclick="openSavedPosts()">Saved</button>
-                        <button class="btn-new btn-secondary-new" onclick="shareProfile()">Share</button>
-                    </div>
+                    <div style="display: flex; justify-content: center; width: 100%;"><button id="shareBtn" class="btn-new btn-secondary-new" onclick="shareProfile()">SHARE</button></div>
 
                     <!-- EDIT MODE FORM (Hidden by default) -->
                     <div id="editForm" class="edit-form-new" style="display: none;">
@@ -948,6 +874,8 @@
         
     </style>
 
+    <!-- NETWORK MODAL CONTAINER -->
+    <div id="networkModalContainer" style="display: none; position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0,0,0,0.8); z-index: 9999; align-items: center; justify-content: center; backdrop-filter: blur(5px);"></div>
 </body>
 
 </html>
