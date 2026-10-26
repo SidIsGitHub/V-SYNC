@@ -2,6 +2,8 @@ const express = require('express');
 const cors = require('cors');
 const mysql = require('mysql2/promise');
 
+const path = require('path');
+
 const app = express();
 const PORT = 3000;
 
@@ -10,7 +12,11 @@ app.use(cors({
     origin: '*', // Allows all local IP variants (localhost, 127.0.0.1)
     methods: ['GET', 'POST', 'DELETE']
 }));
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+// Serve static frontend files directly from the app
+app.use(express.static(__dirname));
 
 // 2. Database Connection Pool
 const pool = mysql.createPool({
@@ -248,6 +254,10 @@ app.get('/api/network/connected/:id', async (req, res) => {
 });
 
 // 5. Server Initialization
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'index.html'));
+});
+
 app.listen(PORT, '127.0.0.1', () => {
     console.log(`V-SYNC API server listening on http://127.0.0.1:${PORT}`);
 });

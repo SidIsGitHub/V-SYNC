@@ -6,28 +6,170 @@
 
 /* --- 2. MICRO-INTERACTIONS (Tactile Buttons) --- */
 /* Makes everything clickable shrink slightly when pressed */
-.btn, 
-.story-item, 
-.tab-button, 
-.chat-item, 
-.profile-pic-large-new, 
+.btn,
+.story-item,
+.tab-button,
+.chat-item,
+.profile-pic-large-new,
 .file-attachment-card,
-.post-click-area { /* <--- NEW: Applies only to the body of the post */
+.post-click-area {
+    /* <--- NEW: Applies only to the body of the post */
     transition: transform 0.1s var(--ease-ios), background-color 0.2s, opacity 0.2s;
-    backface-visibility: hidden; /* Sharp text during anim */
+    backface-visibility: hidden;
+    /* Sharp text during anim */
+}
+
+/* --- NEW PROFILE BUTTON STYLES --- */
+.action-buttons-new {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 10px;
+    margin-top: 15px;
+}
+
+.btn-new {
+    border: none;
+    padding: 10px 0;
+    border-radius: 12px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: transform 0.1s, opacity 0.2s;
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+/* 1. Force buttons to stack vertically (Icon on top of Text) */
+.tab-button {
+    display: flex !important;
+    flex-direction: column !important;
+    /* Stack them */
+    align-items: center !important;
+    /* Center horizontally */
+    justify-content: center !important;
+    /* Center vertically */
+    text-align: center !important;
+    /* Ensure text is centered */
+    padding: 6px 0 !important;
+    /* Adjust padding */
+    height: auto !important;
+}
+
+/* 2. Fix the Text Label */
+.tab-button .tab-label {
+    font-size: 10px !important;
+    /* Small clean text */
+    font-weight: 600 !important;
+    margin-top: 4px !important;
+    /* Space between icon and text */
+    display: block !important;
+    width: 100% !important;
+    /* Span full width to center text properly */
+    text-align: center !important;
+}
+
+/* 3. Fix the Icon Alignment */
+.tab-button svg {
+    margin: 0 auto !important;
+    /* Force icon to middle */
+    display: block !important;
+    width: 24px !important;
+    height: 24px !important;
+}
+
+/* 4. Fix "Messages" Badge wrapper if present */
+.tab-button>div {
+    display: flex !important;
+    justify-content: center !important;
+    width: 100% !important;
+}
+
+/* --- CUSTOM SCROLLBAR (Dark & Subtle) --- */
+
+/* Width of the scrollbar */
+::-webkit-scrollbar {
+    width: 6px;
+    /* Vertical scrollbar width */
+    height: 6px;
+    /* Horizontal scrollbar height */
+}
+
+/* Track (Background) */
+::-webkit-scrollbar-track {
+    background: transparent;
+    /* Keeps it blending with the background */
+}
+
+/* Handle (The moving part) */
+::-webkit-scrollbar-thumb {
+    background: #333;
+    /* Dark Gray */
+    border-radius: 10px;
+    /* Rounded edges */
+}
+
+/* Handle on hover */
+::-webkit-scrollbar-thumb:hover {
+    background: #555;
+    /* Slightly lighter when you touch it */
+}
+
+/* --- HIDE SCROLLBAR COMPLETELY --- */
+
+/* Hide scrollbar for Chrome, Safari and Opera */
+::-webkit-scrollbar {
+    display: none;
+}
+
+/* Hide scrollbar for IE, Edge and Firefox */
+html,
+body,
+.tab-content,
+.modal-content {
+    -ms-overflow-style: none;
+    /* IE and Edge */
+    scrollbar-width: none;
+    /* Firefox */
+}
+
+.btn-new:active {
+    transform: scale(0.96);
+}
+
+/* Edit Button (Primary Color) */
+.btn-primary-new {
+    background: var(--primary-color, #0A84FF);
+    /* Fallback to Blue */
+    color: white;
+}
+
+/* Saved & Share Buttons (Dark Grey) */
+.btn-secondary-new {
+    background: rgba(255, 255, 255, 0.1);
+    color: white;
+}
+
+/* Delete Button (Red) */
+.btn-danger-new {
+    background: rgba(255, 69, 58, 0.15);
+    color: #ff453a;
 }
 
 /* The shrinkage effect */
-.btn:active, 
-.story-item:active, 
-.tab-button:active, 
+.btn:active,
+.story-item:active,
+.tab-button:active,
 .chat-item:active,
 .profile-pic-large-new:active,
 .file-attachment-card:active,
 .post-click-area:active {
-    transform: scale(0.95) !important; /* Subtle shrink */
+    transform: scale(0.95) !important;
+    /* Subtle shrink */
     opacity: 0.9;
 }
+
 .card:active {
     transform: none !important;
 }
@@ -3358,7 +3500,7 @@ textarea::placeholder {
 
 /* --- MODALS --- */
 .modal {
-    
+
     display: none;
     position: fixed;
     top: 0;
@@ -4122,7 +4264,7 @@ body.no-scroll {
         }
     }
 
-    
+
 
     .modal-footer {
         padding-bottom: 30px;
@@ -4381,6 +4523,49 @@ textarea {
 /* Ensure the card can handle absolute positioning */
 .comment-card {
     position: relative !important;
+}
+
+/* --- PROFILE CROPPER FIXES --- */
+#profileEditorImg {
+    /* Critical for mobile dragging */
+    touch-action: none;
+    user-select: none;
+    -webkit-user-drag: none;
+
+    /* Center anchor for easier math */
+    transform-origin: center center;
+    cursor: grab;
+}
+
+#profileEditorImg:active {
+    cursor: grabbing;
+}
+
+/* Post Footer Buttons */
+.post-action-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    /* Space between icon and text */
+    color: var(--text-secondary);
+    /* Grey by default */
+    cursor: pointer;
+    transition: transform 0.1s, color 0.2s;
+    padding: 5px;
+    /* Increase touch target */
+    margin: -5px;
+    /* Negate padding so alignment stays visually same */
+}
+
+.post-action-btn:active {
+    transform: scale(0.95);
+    /* Click effect */
+    color: var(--text-main);
+}
+
+.post-action-btn svg {
+    display: block;
+    /* Removes weird line-height gaps */
 }
 
 @keyframes badgeShine {

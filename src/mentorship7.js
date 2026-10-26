@@ -1,4 +1,51 @@
 
+// --- LEGACY FIREBASE SAFETY SHIELD ---
+if (typeof window.db === 'undefined') {
+    const createChainable = () => {
+        const dummyPromise = Promise.resolve({
+            exists: false,
+            id: 'legacy-id',
+            data: () => ({}),
+            docs: []
+        });
+        const handler = {
+            get: () => handler,
+            set: () => dummyPromise,
+            update: () => dummyPromise,
+            delete: () => dummyPromise,
+            add: () => Promise.resolve({ id: 'dummy' }),
+            onSnapshot: (cb) => { if (typeof cb === 'function') cb({ exists: false, data: () => ({}), docs: [] }); return () => {}; },
+            then: (resolve, reject) => dummyPromise.then(resolve, reject),
+            catch: (reject) => dummyPromise.catch(reject),
+            where: () => handler,
+            orderBy: () => handler,
+            limit: () => handler,
+            doc: () => handler,
+            collection: () => handler
+        };
+        return handler;
+    };
+    window.db = {
+        collection: () => createChainable(),
+        batch: () => ({
+            set: () => {},
+            update: () => {},
+            delete: () => {},
+            commit: () => Promise.resolve()
+        })
+    };
+    window.firebase = {
+        firestore: {
+            FieldValue: {
+                increment: (val) => val,
+                serverTimestamp: () => new Date(),
+                arrayUnion: (...items) => items,
+                arrayRemove: (...items) => items
+            }
+        }
+    };
+}
+
 // --- JWT / LOCALSTORAGE AUTH ---
 let currentUser = JSON.parse(localStorage.getItem('currentUser') || 'null');
 window.currentUser = currentUser;
